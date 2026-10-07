@@ -852,7 +852,7 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
       wallLayer = rng() < 0.6 ? Layer.brickRed : Layer.brickYellow;
       wallC = pick(PAL.natural, rng());
       roof = 'gable';
-      roofLayer = rng() < 0.5 ? Layer.roofSlate : Layer.roofClay;
+      roofLayer = rng() < 0.3 ? Layer.roofGrey : Layer.roofClay;
       break;
     case 'predio-baixo':
       style = FacadeStyle.apartment;
