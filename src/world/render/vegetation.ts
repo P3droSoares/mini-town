@@ -225,18 +225,20 @@ function speciesGeometry(kind: Species, cards: number): SpeciesGeo {
     ])!;
     return { trunk: mergeGeometries(parts)!, leaves, foliage: 'euca' };
   }
-  // copa larga: tronco + 3 galhos principais
+  // copa larga: tronco + 5 galhos; copa em aglomerados (silhueta irregular,
+  // muitos cartões pequenos em vez de poucos grandes = menos cara de papelão)
   const parts = [limb(V(0, -0.3, 0), V(0, 2.6, 0), 0.26, 0.19, 7)];
   const ends: THREE.Vector3[] = [];
-  for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * Math.PI * 2 + 0.4;
-    const end = V(Math.cos(a) * 1.4, 4.1 + rng() * 0.6, Math.sin(a) * 1.4);
-    parts.push(limb(V(0, 2.4, 0), end, 0.14, 0.06, 5));
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 + 0.4 + (rng() - 0.5) * 0.5;
+    const rr = 1.3 + rng() * 0.6;
+    const end = V(Math.cos(a) * rr, 3.9 + rng() * 0.9, Math.sin(a) * rr);
+    parts.push(limb(V(0, 2.3 + rng() * 0.3, 0), end, 0.13, 0.05, 5));
     ends.push(end);
   }
   const leaves = mergeGeometries([
-    crown(V(0, 4.6, 0), 2.6, 1.8, cards, 2.9, rng),
-    ...ends.map((e) => crown(e.clone().add(V(0, 0.4, 0)), 1.3, 1.0, Math.ceil(cards / 3), 2.2, rng)),
+    crown(V(0, 4.9, 0), 2.2, 1.5, Math.ceil(cards * 1.2), 2.1, rng),
+    ...ends.map((e) => crown(e.clone().add(V(0, 0.45, 0)), 1.2 + rng() * 0.3, 0.95, Math.ceil(cards * 0.55), 1.6, rng)),
   ])!;
   return { trunk: mergeGeometries(parts)!, leaves, foliage: 'broad' };
 }
