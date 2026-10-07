@@ -1,4 +1,5 @@
 import { N8AOPostPass } from 'n8ao';
+import { LOWPOLY } from '../world/render/style';
 import {
   BloomEffect,
   BrightnessContrastEffect,
@@ -125,13 +126,14 @@ export class PostFX {
     }
     if (this.tiltShift) effects.push(new TiltShiftEffect({ offset: 0.0, rotation: 0, focusArea: 0.35, feather: 0.25, kernelSize: KernelSize.MEDIUM }));
     // gradação: um pouco mais de contraste/saturação, vinheta suave
-    effects.push(new HueSaturationEffect({ saturation: 0.05 }));
+    // low-poly: cores vivas, sem dessaturar verdes
+    effects.push(new HueSaturationEffect({ saturation: LOWPOLY ? 0.16 : 0.05 }));
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.AGX }));
     // gradação depois do tone mapping (espaço de exibição)
-    this.grade = new GradeEffect({ warmth: 1, contrast: 0.4, greenDesat: 0.4 });
+    this.grade = new GradeEffect({ warmth: 1, contrast: LOWPOLY ? 0.25 : 0.4, greenDesat: LOWPOLY ? 0 : 0.4 });
     effects.push(this.grade);
     effects.push(new BrightnessContrastEffect({ brightness: 0.06, contrast: 0.04 }));
-    effects.push(new VignetteEffect({ offset: 0.35, darkness: 0.35 }));
+    effects.push(new VignetteEffect({ offset: 0.35, darkness: LOWPOLY ? 0.22 : 0.35 }));
     c.addPass(new EffectPass(camera, ...effects));
     this.composer = c;
     this.resize();
