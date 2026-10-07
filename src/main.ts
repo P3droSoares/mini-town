@@ -1,5 +1,6 @@
 import { Game } from './core/Game';
 import { StaticJsonWorldSource } from './data/WorldSource';
+import { Hud } from './ui/Hud';
 import { LoadingScreen } from './ui/LoadingScreen';
 import { WorldState } from './world/WorldState';
 
@@ -27,7 +28,7 @@ async function boot() {
       onProgress: (f, label) => loading.set(0.28 + f * 0.7, label),
     });
     await game.init();
-    void ui;
+    new Hud(ui, game);
     game.start();
     loading.set(1, 'Bem-vindo a Itabirito!');
     loading.hide();

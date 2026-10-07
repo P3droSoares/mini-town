@@ -1,7 +1,10 @@
 import * as THREE from 'three';
-import type { WorldState } from '../world/WorldState';
+import { Player } from '../entities/Player';
 import { CityView } from '../world/CityView';
+import type { WorldState } from '../world/WorldState';
 import { CityCamera } from './CityCamera';
+import { Input } from './Input';
+import { WalkCamera } from './WalkCamera';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
@@ -15,6 +18,8 @@ export interface System {
   update(dt: number): void;
 }
 
+export type CameraMode = 'city' | 'walk';
+
 /**
  * Orquestra renderer, cena, câmeras e sistemas. Não guarda estado do mundo
  * (isso é do `WorldState`) — só apresentação e entrada.
@@ -26,14 +31,26 @@ export class Game {
   readonly world: WorldState;
   readonly view: CityView;
   readonly cityCam: CityCamera;
+  readonly walkCam: WalkCamera;
+  readonly player: Player;
+  readonly input = new Input();
   readonly mobile: boolean;
   readonly sun = new THREE.DirectionalLight('#fff4e0', 2.6);
   readonly hemi = new THREE.HemisphereLight('#cfe6ff', '#8a7a5a', 1.1);
+  mode: CameraMode = 'city';
+  /** ponto de interesse atual (centro da sombra, NPCs, minimapa) */
+  readonly focus = new THREE.Vector3();
+  /** direção do sol (unitária, do chão para o sol) */
+  readonly sunDir = new THREE.Vector3(0.4, 0.8, 0.3).normalize();
+  /** callback opcional que substitui a renderização direta (pós-processamento) */
+  renderOverride: (() => void) | null = null;
+  readonly onModeChange: ((m: CameraMode) => void)[] = [];
+  readonly onResizeHooks: ((w: number, h: number) => void)[] = [];
+
   private readonly systems: System[] = [];
   private readonly clock = new THREE.Clock();
   private running = false;
-  /** callback opcional que substitui a renderização direta (pós-processamento) */
-  renderOverride: (() => void) | null = null;
+  private shadowExtent: number;
 
   constructor(private readonly opts: GameOptions) {
     this.world = opts.world;
@@ -53,26 +70,30 @@ export class Game {
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer = r;
 
-    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 9000);
+    this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 2, 9000);
     this.scene.background = new THREE.Color('#a9c7d8');
     this.scene.fog = new THREE.Fog('#b9d3e0', 500, 1700);
 
-    // luz do sol com sombras suaves que seguem a câmera
+    // sol com sombras suaves que seguem o foco
     const s = this.sun;
     s.castShadow = true;
     const size = opts.mobile ? 1024 : 2048;
     s.shadow.mapSize.set(size, size);
-    const ext = 260;
+    this.shadowExtent = opts.mobile ? 200 : 260;
+    const ext = this.shadowExtent;
     Object.assign(s.shadow.camera, { left: -ext, right: ext, top: ext, bottom: -ext, near: 10, far: 1600 });
     s.shadow.bias = -0.0004;
     s.shadow.normalBias = 0.6;
-    s.shadow.radius = 3;
     this.scene.add(s, s.target, this.hemi);
 
     this.view = new CityView(this.world);
     this.scene.add(this.view.root);
     this.cityCam = new CityCamera(this.camera, opts.canvas, this.world);
+    this.player = new Player(this.world);
+    this.scene.add(this.player.mesh);
+    this.walkCam = new WalkCamera(this.camera, opts.canvas, this.player, this.world, () => this.view.pickMeshes);
 
+    this.input.on('KeyC', () => this.toggleMode());
     window.addEventListener('resize', this.onResize);
   }
 
@@ -86,10 +107,37 @@ export class Game {
     this.systems.push(s);
   }
 
-  /** câmera/foco atual (centro da sombra, LOD, NPCs) */
-  focus = new THREE.Vector3();
-  /** direção do sol (unitária, do chão para o sol) */
-  sunDir = new THREE.Vector3(0.4, 0.8, 0.3).normalize();
+  toggleMode() {
+    this.setMode(this.mode === 'city' ? 'walk' : 'city');
+  }
+
+  setMode(m: CameraMode) {
+    if (m === this.mode) return;
+    this.mode = m;
+    if (m === 'walk') {
+      const t = this.cityCam.target;
+      this.player.spawn(t.x, t.z);
+      this.player.mesh.visible = true;
+      this.cityCam.enabled = false;
+      this.walkCam.enabled = true;
+      // olha na mesma direção que a câmera de cidade olhava
+      const d = t.clone().sub(this.camera.position);
+      this.walkCam.yaw = Math.atan2(-d.x, -d.z);
+      this.walkCam.pitch = 0.3;
+      this.camera.near = 0.3;
+      this.camera.fov = 60;
+    } else {
+      const s = this.player.state;
+      this.player.mesh.visible = false;
+      this.walkCam.enabled = false;
+      this.cityCam.enabled = true;
+      this.camera.near = 2;
+      this.camera.fov = 45;
+      this.cityCam.jumpTo(s.x, s.z, 110);
+    }
+    this.camera.updateProjectionMatrix();
+    this.onModeChange.forEach((f) => f(m));
+  }
 
   start() {
     if (this.running) return;
@@ -100,8 +148,15 @@ export class Game {
 
   private frame = () => {
     const dt = Math.min(this.clock.getDelta(), 0.1);
-    this.cityCam.update(dt);
-    this.focus.copy(this.cityCam.target);
+    if (this.mode === 'walk') {
+      this.player.update(dt, this.input.move, this.input.run, this.walkCam.yaw);
+      this.walkCam.update(dt);
+      const s = this.player.state;
+      this.focus.set(s.x, s.y, s.z);
+    } else {
+      this.cityCam.update(dt);
+      this.focus.copy(this.cityCam.target);
+    }
     for (const s of this.systems) s.update(dt);
     this.view.update(dt);
     this.updateShadowCamera();
@@ -113,7 +168,7 @@ export class Game {
   private updateShadowCamera() {
     const s = this.sun;
     const f = this.focus;
-    const texel = (2 * 260) / s.shadow.mapSize.x;
+    const texel = (2 * this.shadowExtent) / s.shadow.mapSize.x;
     const q = new THREE.Vector3(Math.round(f.x / texel) * texel, f.y, Math.round(f.z / texel) * texel);
     s.target.position.copy(q);
     s.position.copy(q).addScaledVector(this.sunDir, 700);
@@ -128,5 +183,4 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.onResizeHooks.forEach((f) => f(w, h));
   };
-  readonly onResizeHooks: ((w: number, h: number) => void)[] = [];
 }

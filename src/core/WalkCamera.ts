@@ -1,0 +1,112 @@
+import * as THREE from 'three';
+import type { Player } from '../entities/Player';
+import type { WorldState } from '../world/WorldState';
+
+/**
+ * Câmera em 3ª pessoa para o modo a pé. Arrastar (mouse ou toque) gira;
+ * roda/pinça aproxima. Faz raycast contra os prédios para não atravessar
+ * paredes.
+ */
+export class WalkCamera {
+  yaw = 0;
+  pitch = 0.32;
+  distance = 7;
+  enabled = false;
+  private drag: { id: number; x: number; y: number; moved: number } | null = null;
+  private pinch = new Map<number, { x: number; y: number }>();
+  private pinchDist = 0;
+  private readonly ray = new THREE.Raycaster();
+  private readonly tmp = new THREE.Vector3();
+  private readonly target = new THREE.Vector3();
+  /** retorna true quando o último ponteiro foi um arraste (não um clique) */
+  lastWasDrag = false;
+
+  constructor(
+    readonly camera: THREE.PerspectiveCamera,
+    dom: HTMLElement,
+    private readonly player: Player,
+    private readonly world: WorldState,
+    private readonly colliders: () => THREE.Object3D[],
+  ) {
+    dom.addEventListener('pointerdown', this.onDown);
+    window.addEventListener('pointermove', this.onMove);
+    window.addEventListener('pointerup', this.onUp);
+    window.addEventListener('pointercancel', this.onUp);
+    dom.addEventListener('wheel', this.onWheel, { passive: false });
+    this.ray.firstHitOnly = true;
+  }
+
+  private onDown = (e: PointerEvent) => {
+    if (!this.enabled) return;
+    this.pinch.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pinch.size === 2) {
+      const [a, b] = [...this.pinch.values()];
+      this.pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+      this.drag = null;
+      return;
+    }
+    this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 };
+    this.lastWasDrag = false;
+  };
+
+  private onMove = (e: PointerEvent) => {
+    if (!this.enabled) return;
+    if (this.pinch.has(e.pointerId)) this.pinch.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pinch.size === 2) {
+      const [a, b] = [...this.pinch.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (this.pinchDist > 0) this.distance = THREE.MathUtils.clamp(this.distance * (this.pinchDist / d), 3, 22);
+      this.pinchDist = d;
+      return;
+    }
+    if (!this.drag || e.pointerId !== this.drag.id) return;
+    const dx = e.clientX - this.drag.x;
+    const dy = e.clientY - this.drag.y;
+    this.drag.x = e.clientX;
+    this.drag.y = e.clientY;
+    this.drag.moved += Math.abs(dx) + Math.abs(dy);
+    const k = e.pointerType === 'touch' ? 0.006 : 0.0045;
+    this.yaw -= dx * k;
+    this.pitch = THREE.MathUtils.clamp(this.pitch + dy * k, -0.15, 1.25);
+  };
+
+  private onUp = (e: PointerEvent) => {
+    this.pinch.delete(e.pointerId);
+    if (this.pinch.size < 2) this.pinchDist = 0;
+    if (this.drag && e.pointerId === this.drag.id) {
+      this.lastWasDrag = this.drag.moved > 6;
+      this.drag = null;
+    }
+  };
+
+  private onWheel = (e: WheelEvent) => {
+    if (!this.enabled) return;
+    e.preventDefault();
+    this.distance = THREE.MathUtils.clamp(this.distance * (1 + Math.sign(e.deltaY) * 0.12), 3, 22);
+  };
+
+  /** alinha atrás do jogador a partir da câmera atual (transição suave entre modos) */
+  alignBehind() {
+    this.yaw = this.player.state.heading + Math.PI;
+  }
+
+  update(dt: number) {
+    const s = this.player.state;
+    this.target.set(s.x, s.y + 1.6, s.z);
+    const cp = Math.cos(this.pitch);
+    const off = this.tmp.set(Math.sin(this.yaw) * cp, Math.sin(this.pitch), Math.cos(this.yaw) * cp);
+    let dist = this.distance;
+    // colisão da câmera com prédios (BVH) — só chunks próximos
+    this.ray.set(this.target, off);
+    this.ray.far = dist;
+    const near = this.colliders().filter((o) => o.userData.chunk && o.userData.chunk.center.distanceTo(this.target) < 400);
+    const hit = this.ray.intersectObjects(near, false)[0];
+    if (hit) dist = Math.max(1.2, hit.distance - 0.35);
+    const desired = this.target.clone().addScaledVector(off, dist);
+    const ground = this.world.height.sample(desired.x, desired.z) + 0.6;
+    if (desired.y < ground) desired.y = ground;
+    // suaviza só a aproximação para não "pular"
+    this.camera.position.lerp(desired, Math.min(1, dt * 14));
+    this.camera.lookAt(this.target);
+  }
+}
