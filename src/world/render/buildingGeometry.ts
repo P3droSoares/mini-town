@@ -859,6 +859,14 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
       wallC = pick(PAL.colonial, rng());
       roof = 'flat';
       roofBand = true;
+      // muitos prediozinhos têm telhado de 4 águas (metal marrom ou cerâmica)
+      if (rng() < 0.45) {
+        roof = 'hip';
+        roofBand = false;
+        const metal = rng() < 0.55;
+        roofLayer = metal ? Layer.roofMetal : Layer.roofClay;
+        if (metal) roofC = pick([C('#7a4a3a'), C('#6e5040'), C('#835844'), C('#5f4a3e')], rng());
+      }
       break;
     case 'bloco-bnh':
       style = FacadeStyle.slab;
@@ -972,7 +980,7 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
   const d = ws.detail;
 
   // ---- telhado
-  if (roof === 'hip' || roof === 'gable') pitchedRoof(d, rect, top, roofC, wallC, wallLayer, roofLayer, roof === 'hip', arch === 'galpao-metalico' || arch === 'fabrica-tijolo' ? 0.22 : 0.5, detail === 'high');
+  if (roof === 'hip' || roof === 'gable') pitchedRoof(d, rect, top, roofC, wallC, wallLayer, roofLayer, roof === 'hip', arch === 'galpao-metalico' || arch === 'fabrica-tijolo' ? 0.22 : arch === 'predio-baixo' ? 0.32 : 0.5, detail === 'high');
   else if (roof === 'saw' && detail === 'high') {
     sawtoothRoof(d, rect, top, roofC, roofLayer);
     cap(d, ring, top - 0.02, roofC, roofLayer);
