@@ -949,6 +949,11 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
       trim = PAL.churchTrim;
       break;
   }
+  // telhas com textura própria (não tingível): cor do vértice só varia de leve;
+  // a cinza da laje multiplicada pela textura deixava o telhado quase preto
+  if (roofLayer === Layer.roofClay || roofLayer === Layer.roofGrey || roofLayer === Layer.roofSlate) {
+    roofC = pick([C('#f2ece4'), C('#e6ddd2'), C('#fbf5ee'), C('#ddd3c8'), C('#efe2d6')], rng());
+  }
   const pitchedOk = rectangular && rect.hw < 14 && area < 1200;
   if ((roof === 'hip' || roof === 'gable') && !pitchedOk) roof = 'flat';
   if (roof === 'saw' && !rectangular) roof = 'flat';
