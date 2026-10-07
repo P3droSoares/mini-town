@@ -371,67 +371,194 @@ const LEAF_TINTS: Record<Species, string[]> = {
   [Species.Eucalyptus]: ['#dfe8d6', '#cfdcc8', '#e9efe0'],
 };
 
-/**
- * Árvores instanciadas numa grade própria de 500 m (poucas draw calls,
- * mantendo frustum culling): por célula e espécie, um InstancedMesh de
- * tronco e um de folhagem.
- */
-export class TreeRenderer {
-  private geos: SpeciesGeo[];
-  private barkMat: THREE.MeshStandardMaterial;
-  private leafMats: Record<string, THREE.MeshStandardMaterial> = {};
 
-  constructor(tex: TextureLibrary, quality: QualityPreset) {
-    this.geos = [Species.Broadleaf, Species.Ipe, Species.Palm, Species.Eucalyptus].map((k) => speciesGeometry(k, quality.leafCards));
-    this.barkMat = new THREE.MeshStandardMaterial({ color: '#8a7766', roughness: 0.95 });
-    tex.apply(this.barkMat, 'bark', 1);
-    for (const f of ['broad', 'palm', 'euca'] as const) {
-      this.leafMats[f] = new THREE.MeshStandardMaterial({
-        map: foliageTexture(f),
-        alphaTest: 0.42,
-        side: THREE.DoubleSide,
-        roughness: 0.85,
-        metalness: 0,
-      });
+/** layer usada só pela câmera de sombra (proxies de copa) */
+export const SHADOW_ONLY_LAYER = 1;
+
+/** distância (m) da câmera ao centro da célula para trocar por impostores */
+const TREE_LOD_DISTANCE = 300;
+
+/** impostor: 3 quads verticais cruzados com a silhueta da árvore */
+function impostorGeometry(width: number, height: number): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const nor: number[] = [];
+  const uvs: number[] = [];
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI;
+    const dx = Math.cos(a) * (width / 2);
+    const dz = Math.sin(a) * (width / 2);
+    const quad = [
+      [-dx, 0, -dz, 0, 0],
+      [dx, 0, dz, 1, 0],
+      [dx, height, dz, 1, 1],
+      [-dx, height, -dz, 0, 1],
+    ];
+    for (const i of [0, 1, 2, 0, 2, 3]) {
+      const [x, y, z, u, v] = quad[i];
+      pos.push(x, y, z);
+      // normais "para cima e para fora": iluminação parecida com a copa real
+      nor.push(0, 0.85, 0.5);
+      uvs.push(u, v);
     }
   }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  return g;
+}
 
-  build(trees: TreeInstance[], cell = 500): THREE.InstancedMesh[] {
-    const groups = new Map<string, TreeInstance[]>();
-    for (const t of trees) {
-      const k = `${Math.floor(t.x / cell)},${Math.floor(t.z / cell)},${t.kind}`;
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k)!.push(t);
+/** textura de silhueta (tronco + copa) a partir do atlas de folhas */
+function impostorTexture(leaf: THREE.Texture, kind: Species, crownBottom: number): THREE.Texture {
+  const W = 128;
+  const H = 256;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const g = c.getContext('2d')!;
+  const yb = H * (1 - crownBottom);
+  g.fillStyle = '#5a4634';
+  g.fillRect(W / 2 - (kind === Species.Palm ? 3 : 5), yb - 10, kind === Species.Palm ? 6 : 10, H - yb + 10);
+  const img = leaf.image as CanvasImageSource;
+  if (kind === Species.Palm) {
+    for (let i = 0; i < 6; i++) {
+      g.save();
+      g.translate(W / 2, 30);
+      g.rotate(-1.2 + i * 0.48);
+      g.drawImage(img, -18, -10, 36, 80);
+      g.restore();
     }
-    const out: THREE.InstancedMesh[] = [];
+  } else {
+    // copa: vários "tufos" do atlas sobrepostos
+    const blobs = kind === Species.Eucalyptus ? 7 : 9;
+    for (let i = 0; i < blobs; i++) {
+      const t = i / blobs;
+      const bw = W * (0.55 + 0.35 * Math.sin(Math.PI * t));
+      const x = W / 2 - bw / 2 + Math.sin(i * 2.3) * W * 0.12;
+      const y = t * (yb - 10) * 0.85;
+      g.drawImage(img, x, y, bw, bw * 0.9);
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+interface SpeciesRender {
+  geo: SpeciesGeo;
+  proxy: THREE.BufferGeometry;
+  impostor: THREE.BufferGeometry;
+  impostorMat: THREE.MeshStandardMaterial;
+}
+
+/**
+ * Árvores instanciadas numa grade própria de 250 m. Cada célula é um LOD:
+ * perto = tronco + cartões de folhagem; longe = impostores (6 triângulos).
+ * Sombra da copa vem de um proxy simples (icosaedro) numa layer só da
+ * câmera de sombra — alpha-test em sombra é caro.
+ */
+export class TreeRenderer {
+  private species: SpeciesRender[];
+  private barkMat: THREE.MeshStandardMaterial;
+  private leafMats: Record<string, THREE.MeshStandardMaterial> = {};
+  private proxyMat = new THREE.MeshBasicMaterial({ color: '#000000' });
+
+  constructor(
+    tex: TextureLibrary,
+    quality: QualityPreset,
+    private readonly bounds: { minX: number; minZ: number; maxX: number; maxZ: number },
+  ) {
+    this.barkMat = new THREE.MeshStandardMaterial({ color: '#8a7766', roughness: 0.95 });
+    tex.apply(this.barkMat, 'bark', 1);
+    const leafTex: Record<string, THREE.Texture> = {};
+    for (const f of ['broad', 'palm', 'euca'] as const) {
+      leafTex[f] = foliageTexture(f);
+      this.leafMats[f] = new THREE.MeshStandardMaterial({ map: leafTex[f], alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.85, metalness: 0 });
+    }
+    this.species = [Species.Broadleaf, Species.Ipe, Species.Palm, Species.Eucalyptus].map((k) => {
+      const geo = speciesGeometry(k, quality.leafCards);
+      geo.leaves.computeBoundingBox();
+      const bb = geo.leaves.boundingBox!;
+      const size = bb.getSize(new THREE.Vector3());
+      const center = bb.getCenter(new THREE.Vector3());
+      const proxy = new THREE.IcosahedronGeometry(0.5, 1)
+        .scale(size.x * 0.85, size.y * (k === Species.Palm ? 0.35 : 0.8), size.z * 0.85)
+        .translate(center.x, center.y, center.z);
+      const width = Math.max(size.x, size.z);
+      const height = bb.max.y;
+      const impostorMat = new THREE.MeshStandardMaterial({
+        map: impostorTexture(leafTex[geo.foliage], k, bb.min.y / height),
+        alphaTest: 0.4,
+        side: THREE.DoubleSide,
+        roughness: 0.9,
+      });
+      return { geo, proxy, impostor: impostorGeometry(width, height), impostorMat };
+    });
+  }
+
+  build(trees: TreeInstance[], cell = 250): THREE.Object3D[] {
+    const cells = new Map<string, TreeInstance[]>();
+    for (const t of trees) {
+      const k = `${Math.floor(t.x / cell)},${Math.floor(t.z / cell)}`;
+      if (!cells.has(k)) cells.set(k, []);
+      cells.get(k)!.push(t);
+    }
+    const out: THREE.Object3D[] = [];
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const s = new THREE.Vector3();
     const p = new THREE.Vector3();
     const axis = new THREE.Vector3(0, 1, 0);
     const col = new THREE.Color();
-    for (const [k, list] of groups) {
-      const kind = Number(k.split(',')[2]) as Species;
-      const geo = this.geos[kind];
-      const trunk = new THREE.InstancedMesh(geo.trunk, this.barkMat, list.length);
-      const leaves = new THREE.InstancedMesh(geo.leaves, this.leafMats[geo.foliage], list.length);
-      const tints = LEAF_TINTS[kind];
-      list.forEach((t, i) => {
-        q.setFromAxisAngle(axis, t.rot);
-        s.setScalar(t.scale);
-        p.set(t.x, t.y, t.z);
-        m.compose(p, q, s);
-        trunk.setMatrixAt(i, m);
-        leaves.setMatrixAt(i, m);
-        col.set(tints[Math.floor(t.tint * tints.length) % tints.length]);
-        leaves.setColorAt(i, col);
-      });
-      for (const im of [trunk, leaves]) {
-        im.castShadow = true;
-        im.receiveShadow = true;
-        im.computeBoundingSphere();
-        out.push(im);
+    const b = this.bounds;
+    for (const [k, list] of cells) {
+      const [gx, gz] = k.split(',').map(Number);
+      const cx = (gx + 0.5) * cell;
+      const cz = (gz + 0.5) * cell;
+      const cy = list.reduce((a, t) => a + t.y, 0) / list.length;
+      // sombras só perto da cidade (morros distantes não projetam)
+      const nearTown = cx > b.minX - cell && cx < b.maxX + cell && cz > b.minZ - cell && cz < b.maxZ + cell;
+      const lod = new THREE.LOD();
+      lod.position.set(cx, cy, cz);
+      const near = new THREE.Group();
+      const far = new THREE.Group();
+      for (let kind = 0; kind < this.species.length; kind++) {
+        const sl = list.filter((t) => t.kind === kind);
+        if (!sl.length) continue;
+        const sp = this.species[kind];
+        const trunk = new THREE.InstancedMesh(sp.geo.trunk, this.barkMat, sl.length);
+        const leaves = new THREE.InstancedMesh(sp.geo.leaves, this.leafMats[sp.geo.foliage], sl.length);
+        const imp = new THREE.InstancedMesh(sp.impostor, sp.impostorMat, sl.length);
+        const proxy = new THREE.InstancedMesh(sp.proxy, this.proxyMat, sl.length);
+        const tints = LEAF_TINTS[kind as Species];
+        sl.forEach((t, i) => {
+          q.setFromAxisAngle(axis, t.rot);
+          s.setScalar(t.scale);
+          p.set(t.x - cx, t.y - cy, t.z - cz);
+          m.compose(p, q, s);
+          trunk.setMatrixAt(i, m);
+          leaves.setMatrixAt(i, m);
+          imp.setMatrixAt(i, m);
+          proxy.setMatrixAt(i, m);
+          col.set(tints[Math.floor(t.tint * tints.length) % tints.length]);
+          leaves.setColorAt(i, col);
+          imp.setColorAt(i, col);
+        });
+        trunk.castShadow = nearTown;
+        trunk.receiveShadow = true;
+        leaves.receiveShadow = true;
+        leaves.castShadow = false;
+        proxy.castShadow = nearTown;
+        proxy.layers.set(SHADOW_ONLY_LAYER);
+        imp.castShadow = false;
+        for (const im of [trunk, leaves, imp, proxy]) im.computeBoundingSphere();
+        near.add(trunk, leaves);
+        if (nearTown) near.add(proxy);
+        far.add(imp);
       }
+      lod.addLevel(near, 0);
+      lod.addLevel(far, TREE_LOD_DISTANCE);
+      out.push(lod);
     }
     return out;
   }

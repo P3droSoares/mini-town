@@ -156,7 +156,7 @@ export class CityView {
     await nextFrame();
     const trees = scatterTrees(world, this.quality.trees);
     // (árvores usam grade própria de 500 m — ver TreeRenderer)
-    this.trees = new TreeRenderer(this.tex, this.quality);
+    this.trees = new TreeRenderer(this.tex, this.quality, world.data.bounds);
     lap('arvores');
 
     // água (global, poucas feições)

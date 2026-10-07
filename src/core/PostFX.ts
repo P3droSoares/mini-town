@@ -76,6 +76,7 @@ export class PostFX {
     if (!this.composer) return;
     const { renderer } = this.game;
     const size = renderer.getSize(new THREE.Vector2());
+    if (size.x < 2 || size.y < 2) return;
     this.composer.setPixelRatio(renderer.getPixelRatio());
     this.composer.setSize(size.x, size.y);
     this.tilt.forEach((p) => p.uniforms.uResolution.value.set(size.x * renderer.getPixelRatio(), size.y * renderer.getPixelRatio()));

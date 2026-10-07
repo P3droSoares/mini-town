@@ -56,7 +56,7 @@ export const PRESETS: Record<QualityLevel, QualityPreset> = {
     level: 'high',
     pixelRatio: 2,
     antialias: true,
-    shadowMap: 4096,
+    shadowMap: 2048,
     normalMaps: true,
     anisotropy: 8,
     ssao: true,

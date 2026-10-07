@@ -56,6 +56,8 @@ export class Game {
   private readonly clock = new THREE.Clock();
   private running = false;
   private shadowExtent: number;
+  private frameNo = 0;
+  private readonly lastSunDir = new THREE.Vector3();
 
   constructor(private readonly opts: GameOptions) {
     this.world = opts.world;
@@ -72,6 +74,8 @@ export class Game {
     r.setSize(window.innerWidth, window.innerHeight, false);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
+    // atualização manual: só quando algo relevante muda (ver updateShadowCamera)
+    r.shadowMap.autoUpdate = false;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 0.9;
     r.outputColorSpace = THREE.SRGBColorSpace;
@@ -91,6 +95,8 @@ export class Game {
     Object.assign(s.shadow.camera, { left: -ext, right: ext, top: ext, bottom: -ext, near: 10, far: 1600 });
     s.shadow.bias = -0.0004;
     s.shadow.normalBias = 0.6;
+    // proxies de copa (layer 1) só entram no passe de sombra
+    s.shadow.camera.layers.enable(1);
     this.scene.add(s, s.target, this.hemi);
 
     this.cityCam = new CityCamera(this.camera, opts.canvas, this.world);
@@ -180,8 +186,33 @@ export class Game {
     this.renderer.setAnimationLoop(this.frame);
   }
 
+  /** resolução dinâmica: mantém ~60 FPS ajustando o pixel ratio */
+  private dyn = { acc: 0, frames: 0, pr: 0 };
+  private adaptResolution(rawDt: number) {
+    const d = this.dyn;
+    if (!d.pr) d.pr = this.renderer.getPixelRatio();
+    d.acc += rawDt;
+    d.frames++;
+    if (d.acc < 2) return;
+    const avg = (d.acc / d.frames) * 1000;
+    d.acc = 0;
+    d.frames = 0;
+    const max = Math.min(window.devicePixelRatio, this.quality.pixelRatio);
+    const min = Math.min(max, 0.75);
+    let pr = d.pr;
+    if (avg > 21 && pr > min) pr = Math.max(min, pr - 0.15);
+    else if (avg < 14 && pr < max) pr = Math.min(max, pr + 0.1);
+    if (pr !== d.pr) {
+      d.pr = pr;
+      this.renderer.setPixelRatio(pr);
+      this.onResize();
+    }
+  }
+
   private frame = () => {
-    const dt = Math.min(this.clock.getDelta(), 0.1);
+    const raw = this.clock.getDelta();
+    const dt = Math.min(raw, 0.1);
+    if (document.visibilityState === 'visible') this.adaptResolution(raw);
     if (this.mode === 'walk') {
       this.player.update(dt, this.input.move, this.input.run, this.walkCam.yaw);
       this.walkCam.update(dt);
@@ -194,6 +225,11 @@ export class Game {
     for (const s of this.systems) s.update(dt);
     this.view.update(dt);
     this.updateShadowCamera();
+    // canvas sem tamanho (aba/janela minimizada no carregamento): nada a desenhar
+    if (this.renderer.domElement.width < 2) {
+      if (window.innerWidth > 1) this.onResize();
+      return;
+    }
     if (this.renderOverride) this.renderOverride();
     else this.renderer.render(this.scene, this.camera);
   };
@@ -204,14 +240,21 @@ export class Game {
     const f = this.focus;
     const texel = (2 * this.shadowExtent) / s.shadow.mapSize.x;
     const q = new THREE.Vector3(Math.round(f.x / texel) * texel, f.y, Math.round(f.z / texel) * texel);
+    const moved = !q.equals(s.target.position) || !this.lastSunDir.equals(this.sunDir);
     s.target.position.copy(q);
     s.position.copy(q).addScaledVector(this.sunDir, 700);
     s.target.updateMatrixWorld();
+    this.lastSunDir.copy(this.sunDir);
+    // câmera parada: sombras (carros, pedestres) a 30 Hz bastam
+    this.frameNo++;
+    this.renderer.shadowMap.needsUpdate = moved || this.frameNo % 2 === 0;
   }
 
   private onResize = () => {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    // janela minimizada/oculta: tamanho 0 quebraria os framebuffers
+    if (w < 2 || h < 2) return;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);

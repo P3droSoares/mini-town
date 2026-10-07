@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { WorldState } from '../world/WorldState';
 import { distSqToSegment } from '../world/geo';
+import { createPedestrianMaterial, pedestrianGeometry } from './npcGeometry';
 
 const RADIUS = 0.35;
 const WALK = 4.2;
@@ -22,36 +23,23 @@ export interface PlayerState {
 export class Player {
   readonly state: PlayerState = { x: 0, z: 0, y: 0, heading: 0, speed: 0 };
   readonly mesh = new THREE.Group();
-  private legs: THREE.Mesh[] = [];
-  private arms: THREE.Mesh[] = [];
-  private body: THREE.Group;
+  private body: THREE.InstancedMesh;
+  private walkAttr: THREE.InstancedBufferAttribute;
   private phase = 0;
 
   constructor(private readonly world: WorldState) {
-    const skin = new THREE.MeshStandardMaterial({ color: '#d9a27a', roughness: 0.8, flatShading: true });
-    const shirt = new THREE.MeshStandardMaterial({ color: '#c2633a', roughness: 0.85, flatShading: true });
-    const pants = new THREE.MeshStandardMaterial({ color: '#34495e', roughness: 0.9, flatShading: true });
-    const hair = new THREE.MeshStandardMaterial({ color: '#3b2a20', roughness: 0.9, flatShading: true });
-    this.body = new THREE.Group();
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.62, 0.3), shirt);
-    torso.position.y = 1.12;
-    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 1), skin);
-    head.position.y = 1.62;
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.21, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), hair);
-    cap.position.y = 1.65;
-    this.body.add(torso, head, cap);
-    for (const side of [-1, 1]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.78, 0.2).translate(0, -0.39, 0), pants);
-      leg.position.set(0.13 * side, 0.82, 0);
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.58, 0.14).translate(0, -0.28, 0), shirt);
-      arm.position.set(0.33 * side, 1.4, 0);
-      this.legs.push(leg);
-      this.arms.push(arm);
-      this.body.add(leg, arm);
-    }
-    this.body.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) o.castShadow = true;
-    });
+    // mesmo modelo anatômico dos pedestres (animação de membros na GPU)
+    this.body = new THREE.InstancedMesh(pedestrianGeometry(), createPedestrianMaterial(), 1);
+    this.body.setMatrixAt(0, new THREE.Matrix4());
+    const geo = this.body.geometry;
+    const attr = (k: string, v: number[]) => geo.setAttribute(k, new THREE.InstancedBufferAttribute(new Float32Array(v), 3));
+    attr('aSkin', new THREE.Color('#d9a27a').toArray());
+    attr('aShirt', new THREE.Color('#c2633a').toArray());
+    attr('aPants', new THREE.Color('#34495e').toArray());
+    this.walkAttr = new THREE.InstancedBufferAttribute(new Float32Array([0, 7, 0]), 3);
+    geo.setAttribute('aWalk', this.walkAttr);
+    this.body.castShadow = true;
+    this.body.frustumCulled = false;
     // marcador no chão (ajuda a achar o boneco de longe)
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.45, 0.6, 24).rotateX(-Math.PI / 2),
@@ -146,15 +134,12 @@ export class Player {
     const gy = this.world.height.sample(s.x, s.z);
     s.y += (gy - s.y) * Math.min(1, dt * 18);
 
-    // animação procedural de caminhada
+    // animação de caminhada (amplitude/frequência pelo ritmo)
     const k = s.speed / WALK;
     this.phase += dt * (4 + s.speed * 1.6) * (k > 0.05 ? 1 : 0);
-    const swing = Math.sin(this.phase) * Math.min(1, k) * 0.7;
-    this.legs[0].rotation.x = swing;
-    this.legs[1].rotation.x = -swing;
-    this.arms[0].rotation.x = -swing * 0.8;
-    this.arms[1].rotation.x = swing * 0.8;
-    this.body.position.y = Math.abs(Math.sin(this.phase)) * 0.06 * Math.min(1, k);
+    this.walkAttr.setXYZ(0, 0, s.speed > 6 ? 10 : 7, Math.min(1, k) * (s.speed > 6 ? 1.3 : 1));
+    this.walkAttr.needsUpdate = true;
+    this.body.position.y = Math.abs(Math.sin(this.phase)) * 0.04 * Math.min(1, k);
     this.syncMesh();
   }
 
