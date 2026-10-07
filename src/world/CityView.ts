@@ -5,7 +5,8 @@ import type { Building } from '../data/types';
 import type { WorldState } from './WorldState';
 import { GeometryWriter } from './render/GeometryWriter';
 import { writeDrapedPolygon } from './render/areaGeometry';
-import { type BuildingWriters, type FrontTest, WRITER_KEYS, type WriterKey, createWriters, writeBuilding } from './render/buildingGeometry';
+import { type BuildingWriters, type FrontTest, WRITER_KEYS, type WindowInstance, type WriterKey, createWriters, writeBuilding } from './render/buildingGeometry';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createBuildingMaterial, createSignMaterial, createTexturedMaterial, worldUniforms } from './render/materials';
 import { SignAtlas } from './render/signAtlas';
 import { writeYard } from './render/yards';
@@ -82,6 +83,9 @@ export class CityView {
   trees!: TreeRenderer;
   readonly materials: Record<WriterKey, THREE.Material>;
   readonly signs: SignAtlas;
+  private readonly windowMeshes: THREE.InstancedMesh[] = [];
+  private readonly windowGeometry = windowFrameGeometry();
+  private readonly windowMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.55, metalness: 0.05 });
   readonly roadMaterial: THREE.MeshStandardMaterial;
   readonly walkMaterial: THREE.MeshStandardMaterial;
   readonly areaMaterial: THREE.MeshStandardMaterial;
@@ -294,6 +298,13 @@ export class CityView {
       }
       chunk.lod.addLevel(high.group, 0);
       chunk.lod.addLevel(low.group, this.quality.lodDistance);
+      // molduras de janela instanciadas (só perto da câmera — ver update)
+      if (high.ws.windows.length && this.quality.level !== 'low') {
+        const im = buildWindowMesh(high.ws.windows, this.windowGeometry, this.windowMaterial);
+        im.userData.center = chunk.center;
+        this.windowMeshes.push(im);
+        chunk.group.add(im);
+      }
     }
 
     // ---- ruas e calçadas
@@ -381,8 +392,12 @@ export class CityView {
     return g;
   }
 
-  update(dt: number) {
+  update(dt: number, camera?: THREE.Camera) {
     worldUniforms.uTime.value += dt;
+    if (camera) {
+      const lim = this.quality.level === 'high' ? 420 : 300;
+      for (const im of this.windowMeshes) im.visible = (im.userData.center as THREE.Vector3).distanceTo(camera.position) < lim;
+    }
   }
 }
 
@@ -423,4 +438,49 @@ diffuseColor.rgb = mix(vec3(0.36, 0.33, 0.25), vec3(0.08, 0.16, 0.17), edge);`,
   };
   m.customProgramCacheKey = () => 'water-v2';
   return m;
+}
+
+/**
+ * Moldura de janela unitária (1 x 1, virada para +z): batentes, travessa,
+ * montante central, peitoril saliente e cimalha. Escalada por instância
+ * para a largura/altura de cada janela.
+ */
+function windowFrameGeometry(): THREE.BufferGeometry {
+  const t = 0.08;
+  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) =>
+    new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0).translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  const parts = [
+    box(-0.5, -0.5 + t, -0.5, 0.5, -0.02, 0.06),
+    box(0.5 - t, 0.5, -0.5, 0.5, -0.02, 0.06),
+    box(-0.5, 0.5, 0.5 - t, 0.5, -0.02, 0.06),
+    box(-0.5, 0.5, -0.5, -0.5 + t, -0.02, 0.06),
+    box(-0.025, 0.025, -0.5, 0.5, -0.01, 0.035),
+    box(-0.5, 0.5, 0.17, 0.21, -0.01, 0.035),
+    box(-0.6, 0.6, -0.57, -0.5, -0.02, 0.17),
+    box(-0.57, 0.57, 0.5, 0.57, -0.02, 0.1),
+  ].map((g) => g.toNonIndexed());
+  const g = mergeGeometries(parts)!;
+  g.deleteAttribute('uv');
+  return g;
+}
+
+function buildWindowMesh(list: WindowInstance[], geo: THREE.BufferGeometry, mat: THREE.Material): THREE.InstancedMesh {
+  const im = new THREE.InstancedMesh(geo, mat, list.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const p = new THREE.Vector3();
+  const sc = new THREE.Vector3();
+  list.forEach((w, i) => {
+    q.setFromAxisAngle(up, w.yaw);
+    p.set(w.x, w.y, w.z);
+    sc.set(w.w, w.h, 1);
+    m.compose(p, q, sc);
+    im.setMatrixAt(i, m);
+    im.setColorAt(i, w.color);
+  });
+  im.castShadow = true;
+  im.receiveShadow = true;
+  im.computeBoundingSphere();
+  return im;
 }

@@ -66,6 +66,19 @@ janela; à noite parte dos cômodos acende. Nenhuma geometria extra.
 | Industrial | galpão metálico · fábrica de tijolo (dente-de-serra, chaminé, tanques, marquise de carga) |
 | Institucional / religioso | prédio público com mastro · igreja barroca |
 
+**Volumes e detalhes geométricos** (menos "caixas"): molduras de janela com
+peitoril e cimalha em geometria instanciada (só nos quarteirões perto da câmera),
+cunhais e cornija nas casas coloniais, casas térreas com **varanda recortada** no
+volume e colunas, cumeeira e calhas nos telhados, pilastras nos prédios de tijolo,
+marquise de embasamento e **cobertura recuada** nas torres, torres modernas com
+**cantos arredondados**.
+
+**Luz e céu**: céu físico (Preetham — espalhamento Rayleigh/Mie) com **nuvens
+procedurais** que se movem com o vento, estrelas e lua; a **iluminação de
+ambiente é gerada do próprio céu** (muda com a hora e as nuvens); sombras
+**PCSS** (penumbra que cresce com a distância, como em ray tracing), oclusão de
+ambiente (N8AO), **raios de sol** (god rays), bloom, tone mapping AgX e gradação.
+
 **Outdoors** em coberturas de comércio e torres; letreiros e outdoors acendem à noite.
 
 **Lotes com quintal** (~1.700): o preenchimento procedural gera lotes mais fundos
@@ -75,8 +88,8 @@ terreno livre não invadem lotes (nem os ~290 **terrenos vagos reservados**).
 
 | qualidade | para | o que muda |
 | --- | --- | --- |
-| Alta | desktop | SSAO, bloom, sombras 2048, LOD a 700 m |
-| Média | celular bom / notebook fraco | sem SSAO, bloom, LOD a 520 m |
+| Alta | GPU dedicada | sombras PCSS, SSAO, god rays, bloom, LOD a 700 m |
+| Média | GPU integrada / celular bom | god rays + bloom, sombras PCF suaves, LOD a 380 m |
 | Baixa | celular simples | sem pós-processamento, sombras 1024, menos árvores/NPCs |
 
 "Automática" escolhe pela GPU (dedicada = alta; integrada Intel/AMD/celular = média ou baixa). Em tempo real, a **resolução dinâmica**

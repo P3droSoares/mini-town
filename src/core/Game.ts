@@ -231,7 +231,7 @@ export class Game {
       this.focus.copy(this.cityCam.target);
     }
     for (const s of this.systems) s.update(dt);
-    this.view.update(dt);
+    this.view.update(dt, this.camera);
     this.updateShadowCamera();
     // canvas sem tamanho (aba/janela minimizada no carregamento): nada a desenhar
     if (this.renderer.domElement.width < 2) {

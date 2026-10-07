@@ -23,12 +23,26 @@ export interface BuildingWriters {
   walls: GeometryWriter;
   detail: GeometryWriter;
   signs: GeometryWriter;
+  /** molduras de janela (instanciadas por chunk, só perto da câmera) */
+  windows: WindowInstance[];
+}
+
+/** moldura de janela: centro na parede, orientação, tamanho e cor */
+export interface WindowInstance {
+  x: number;
+  y: number;
+  z: number;
+  /** ângulo (rad) da normal externa no plano xz */
+  yaw: number;
+  w: number;
+  h: number;
+  color: THREE.Color;
 }
 export const WRITER_KEYS = ['walls', 'detail', 'signs'] as const;
 export type WriterKey = (typeof WRITER_KEYS)[number];
 
 export function createWriters(): BuildingWriters {
-  return { walls: new GeometryWriter(), detail: new GeometryWriter(), signs: new GeometryWriter() };
+  return { walls: new GeometryWriter(), detail: new GeometryWriter(), signs: new GeometryWriter(), windows: [] };
 }
 
 /** Teste "esta parede dá para a rua?" (ponto médio + normal externa) */
@@ -456,6 +470,17 @@ function pitchedRoof(w: GeometryWriter, r: OrientedRect, top: number, roofC: THR
   w.layer = -1;
   if (!eaves) return;
   const darker = roofC.clone().multiplyScalar(0.55);
+  // cumeeira (peça sobre o encontro das águas)
+  {
+    const rl = hip ? Math.max(0, L - W) : L + o;
+    if (rl > 0.3) w.box(cx, cz, top + h - 0.06, top + h + 0.1, ux, uz, rl, 0.14, darker);
+  }
+  // calhas nos beirais longos
+  for (const sv of [-(W + o), W + o]) {
+    const gx = cx + vxx * sv;
+    const gz = cz + vzz * sv;
+    w.box(gx, gz, yb - 0.32, yb - 0.14, ux, uz, L + o, 0.08, PAL.metal);
+  }
   const ring = [A, B, Cc, D];
   for (let i = 0; i < 4; i++) {
     const p = ring[i];
@@ -606,6 +631,137 @@ function rooftop(ctx: Ctx, r: OrientedRect, top: number, opts: { ac: number; tan
     const len = Math.hypot(bx - ax, bz - az);
     d.box((ax + bx) / 2, (az + bz) / 2, top + 0.6, top + 1.1, (bx - ax) / len, (bz - az) / len, len / 2, 0.3, PAL.steel);
   }
+}
+
+// ------------------------------------------------------- detalhes geométricos
+
+/** retângulo da janela por estilo (mesmos números do shader) */
+function windowRect(style: number): [number, number, number, number] | null {
+  switch (style) {
+    case FacadeStyle.house:
+      return [0.72, 0.95, 1.88, 2.35];
+    case FacadeStyle.commercial:
+      return [0.45, 0.9, 2.15, 2.45];
+    case FacadeStyle.apartment:
+      return [0.45, 0.8, 2.55, 2.4];
+    case FacadeStyle.institutional:
+      return [0.35, 0.6, 2.85, 2.6];
+    case FacadeStyle.modern:
+      return [0.3, 0.6, 3.7, 2.5];
+    case FacadeStyle.brick:
+      return [0.62, 0.9, 1.78, 2.4];
+    case FacadeStyle.slab:
+      return [0.55, 0.85, 2.45, 2.3];
+    default:
+      return null;
+  }
+}
+
+/** registra as molduras das janelas de uma parede (mesmas regras do shader) */
+function collectWindows(ctx: Ctx, l: WallLayout, levels: number, color: THREE.Color) {
+  const rect = windowRect(ctx.style);
+  if (!rect || !l.bays) return;
+  const bay = BAY[ctx.style];
+  const dx = (l.b[0] - l.a[0]) / l.len;
+  const dz = (l.b[1] - l.a[1]) / l.len;
+  const yaw = Math.atan2(l.ox, l.oz);
+  const mid = Math.floor(l.bays / 2);
+  const doorStyle = [FacadeStyle.house, FacadeStyle.apartment, FacadeStyle.institutional, FacadeStyle.modern, FacadeStyle.brick, FacadeStyle.slab].includes(ctx.style as 0);
+  for (let f = 0; f < levels; f++) {
+    if ((f + 1) * FLOOR_H > ctx.topV + 0.3) break;
+    for (let k = 0; k < l.bays; k++) {
+      if (f === 0 && l.front && ctx.style === FacadeStyle.commercial) continue; // vitrine
+      if (f === 0 && l.front && k === mid && doorStyle) continue; // porta
+      const s = l.margin + k * bay + (rect[0] + rect[2]) / 2;
+      ctx.w.windows.push({
+        x: l.a[0] + dx * s + l.ox * 0.005,
+        y: ctx.gMax + f * FLOOR_H + (rect[1] + rect[3]) / 2,
+        z: l.a[1] + dz * s + l.oz * 0.005,
+        yaw,
+        w: rect[2] - rect[0],
+        h: rect[3] - rect[1],
+        color,
+      });
+    }
+  }
+}
+
+/** cantos convexos de um anel CCW */
+function convexCorners(ring: Vec2[]) {
+  const out: { p: Vec2; ax: number; az: number }[] = [];
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[i];
+    const a = ring[(i - 1 + ring.length) % ring.length];
+    const b = ring[(i + 1) % ring.length];
+    const cross = (p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0]);
+    if (cross > 0) {
+      // bissetriz externa
+      const e1 = norm2(p[0] - a[0], p[1] - a[1]);
+      const e2 = norm2(b[0] - p[0], b[1] - p[1]);
+      const n = norm2(e1[1] + e2[1], -e1[0] - e2[0]);
+      out.push({ p, ax: n[0], az: n[1] });
+    }
+  }
+  return out;
+}
+
+/** cunhais (pilastras de canto) das casas coloniais */
+function quoins(w: GeometryWriter, ring: Vec2[], y0: number, y1: number, c: THREE.Color) {
+  for (const { p, ax, az } of convexCorners(ring)) {
+    const ux = -az;
+    const uz = ax;
+    w.box(p[0] + ax * 0.04, p[1] + az * 0.04, y0, y1, ux, uz, 0.24, 0.24, c);
+  }
+}
+
+/** pilastras verticais entre vãos (prédios de tijolo / lojas) */
+function pilasters(w: GeometryWriter, l: WallLayout, bay: number, every: number, y0: number, y1: number, c: THREE.Color, layer: number) {
+  const dx = (l.b[0] - l.a[0]) / l.len;
+  const dz = (l.b[1] - l.a[1]) / l.len;
+  w.layer = layer;
+  for (let k = 0; k <= l.bays; k += every) {
+    const s = l.margin + k * bay;
+    if (s < 0.3 || s > l.len - 0.3) continue;
+    w.box(l.a[0] + dx * s + l.ox * 0.1, l.a[1] + dz * s + l.oz * 0.1, y0, y1, dx, dz, 0.18, 0.12, c);
+  }
+  w.layer = -1;
+}
+
+/** anel retangular com cantos arredondados (quartos de círculo) */
+function roundedRing(r: OrientedRect, radius: number, seg = 5): Vec2[] {
+  const vx = -r.uz;
+  const vz = r.ux;
+  const pts: Vec2[] = [];
+  const corners: [number, number, number][] = [
+    [r.hl - radius, -r.hw + radius, -Math.PI / 2],
+    [r.hl - radius, r.hw - radius, 0],
+    [-r.hl + radius, r.hw - radius, Math.PI / 2],
+    [-r.hl + radius, -r.hw + radius, Math.PI],
+  ];
+  for (const [cu, cv, a0] of corners)
+    for (let i = 0; i <= seg; i++) {
+      const a = a0 + (i / seg) * (Math.PI / 2);
+      const su = cu + Math.cos(a) * radius;
+      const sv = cv + Math.sin(a) * radius;
+      pts.push([r.cx + r.ux * su + vx * sv, r.cz + r.uz * su + vz * sv]);
+    }
+  return orientCCW(pts);
+}
+
+/**
+ * Casa com varanda recortada no volume: o anel ganha um entalhe na frente
+ * (numa ponta); o telhado continua cobrindo a varanda, apoiado em colunas.
+ */
+function porchRing(r: OrientedRect, side: 1 | -1, pw: number, pd: number): { ring: Vec2[]; columns: Vec2[]; floor: Vec2[] } {
+  const vx = -r.uz;
+  const vz = r.ux;
+  const W = (su: number, sv: number): Vec2 => [r.cx + r.ux * su + vx * sv * side, r.cz + r.uz * su + vz * sv * side];
+  const { hl, hw } = r;
+  const ring = orientCCW([W(-hl, -hw + pd), W(-hl + pw, -hw + pd), W(-hl + pw, -hw), W(hl, -hw), W(hl, hw), W(-hl, hw)]);
+  const columns = [W(-hl + 0.2, -hw + 0.2)];
+  if (pw > 4) columns.push(W(-hl + pw / 2, -hw + 0.2));
+  const floor = [W(-hl, -hw), W(-hl + pw, -hw), W(-hl + pw, -hw + pd), W(-hl, -hw + pd)];
+  return { ring, columns, floor };
 }
 
 // ------------------------------------------------------------------ escolha
@@ -785,7 +941,23 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
 
   if (arch === 'igreja' && rectangular) return writeChurch(ws, b, rect, base, top, gMax, ctx, detail);
 
-  const ring = rectangular ? boxRing(rect, style === FacadeStyle.office || style === FacadeStyle.slab ? 0 : Math.min(0.3, rect.hw * 0.08)) : orientCCW(b.outer);
+  // ---- forma do volume: polígono real, retângulo chanfrado, cantos
+  // arredondados (torres modernas) ou casa com varanda recortada
+  let ring: Vec2[];
+  let porch: ReturnType<typeof porchRing> | null = null;
+  const roundTower = rectangular && (arch === 'torre-moderna' || arch === 'escritorios') && rect.hw > 5 && rng() < 0.6;
+  const housey = arch === 'colonial' || arch === 'casa-simples' || arch === 'casa-moderna';
+  if (!rectangular) ring = orientCCW(b.outer);
+  else if (roundTower) ring = roundedRing(rect, Math.min(3, rect.hw * 0.35));
+  else if (housey && levels === 1 && detail === 'high' && rect.hl > 4.5 && rect.hw > 3.2 && rng() < 0.5) {
+    // lado da frente = lado longo voltado para a rua
+    const vx = -rect.uz;
+    const vz = rect.ux;
+    const sideFront = (sgn: number) => !!front?.(rect.cx + vx * rect.hw * sgn, rect.cz + vz * rect.hw * sgn, vx * sgn, vz * sgn);
+    const side: 1 | -1 = sideFront(-1) ? -1 : sideFront(1) ? 1 : -1;
+    porch = porchRing(rect, side, Math.min(rect.hl, 5.5), Math.min(2.4, rect.hw * 0.6));
+    ring = porch.ring;
+  } else ring = boxRing(rect, style === FacadeStyle.office || style === FacadeStyle.slab ? 0 : Math.min(0.3, rect.hw * 0.08));
   let anyFront = false;
   const walls = writeWalls(ctx, ring, base, top, wallC, wallLayer, (l) => {
     const f = frontOf(l);
@@ -806,6 +978,44 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
     if (detail === 'high') parapet(d, ring, top, roofBand || arch === 'casa-moderna' ? 0.9 : 0.6, wallC, wallLayer);
   }
   if (detail === 'low') return;
+
+  // ---- molduras de janela (geometria instanciada)
+  const frameC =
+    style === FacadeStyle.modern
+      ? C('#2a2d31')
+      : style === FacadeStyle.house
+        ? PAL.white
+        : style === FacadeStyle.brick
+          ? C('#efe9dc')
+          : C('#c9ced3');
+  for (const l of walls) collectWindows(ctx, l, levels, frameC);
+
+  // ---- casas: cunhais, cornija, varanda com colunas
+  if (rectangular && (arch === 'colonial' || arch === 'sobrado-tijolo')) quoins(d, ring, base, top, arch === 'colonial' ? PAL.white : C('#e6dfd2'));
+  if (rectangular && (roof === 'hip' || roof === 'gable') && housey) band(d, ring, top - 0.32, top - 0.02, 0.1, PAL.white);
+  if (porch) {
+    d.layer = Layer.patio;
+    cap(d, porch.floor, gMax + 0.14, C('#d9cbb5'), Layer.patio);
+    d.layer = -1;
+    for (const [x, z] of porch.columns) {
+      cylinder(d, x, z, gMax, top, 0.13, PAL.white, 8);
+      d.box(x, z, gMax, gMax + 0.35, rect.ux, rect.uz, 0.2, 0.2, PAL.white);
+    }
+  }
+  // ---- pilastras em tijolo e embasamento (marquise) nas torres
+  if (rectangular && (arch === 'torre-tijolo' || arch === 'loja-tijolo')) for (const l of walls) if (l.bays >= 3) pilasters(d, l, BAY[style], 2, base, top - 0.6, wallC, wallLayer);
+  if (rectangular && levels >= 5) band(d, ring, gMax + FLOOR_H - 0.1, gMax + FLOOR_H + 0.18, 0.55, PAL.white, Layer.concrete);
+  // ---- cobertura recuada (penthouse) nas torres altas
+  let penthouse = false;
+  if (rectangular && !roundTower && levels >= 7 && (arch === 'torre-moderna' || arch === 'escritorios' || arch === 'bloco-bnh') && rect.hw > 6) {
+    penthouse = true;
+    const ph = { ...rect, hl: rect.hl - 2.2, hw: rect.hw - 2.2 };
+    const phRing = boxRing(ph);
+    const ctx2: Ctx = { ...ctx, topV: top + FLOOR_H - gMax };
+    writeWalls(ctx2, phRing, top, top + FLOOR_H, wallC, wallLayer, () => false);
+    cap(d, phRing, top + FLOOR_H + 0.01, roofC, Layer.roofConcrete);
+    parapet(d, phRing, top + FLOOR_H, 0.6, wallC, wallLayer);
+  }
 
   // ---- faixas de laje / cornija
   if (rectangular && (style === FacadeStyle.slab || style === FacadeStyle.apartment || style === FacadeStyle.institutional)) {
@@ -860,7 +1070,7 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
       rooftop(ctx, rect, top, {
         ac: style === FacadeStyle.commercial || style === FacadeStyle.office ? 2 + Math.floor(rng() * 3) : rng() < 0.4 ? 1 : 0,
         tank: rng() < 0.7 && arch !== 'supermercado',
-        machine: levels >= 5,
+        machine: levels >= 5 && !penthouse,
         hvac: arch === 'supermercado' || arch === 'escritorios',
       });
   } else if ((arch === 'colonial' || arch === 'sobrado-tijolo') && rng() < 0.45) {
