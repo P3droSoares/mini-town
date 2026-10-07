@@ -126,6 +126,7 @@ export class Game {
       this.walkCam.pitch = 0.3;
       this.camera.near = 0.3;
       this.camera.fov = 60;
+      this.setShadowExtent(80); // sombras mais nítidas perto do personagem
     } else {
       const s = this.player.state;
       this.player.mesh.visible = false;
@@ -133,10 +134,28 @@ export class Game {
       this.cityCam.enabled = true;
       this.camera.near = 2;
       this.camera.fov = 45;
+      this.setShadowExtent(this.mobile ? 200 : 260);
       this.cityCam.jumpTo(s.x, s.z, 110);
     }
     this.camera.updateProjectionMatrix();
     this.onModeChange.forEach((f) => f(m));
+  }
+
+  private setShadowExtent(ext: number) {
+    this.shadowExtent = ext;
+    const c = this.sun.shadow.camera;
+    c.left = c.bottom = -ext;
+    c.right = c.top = ext;
+    c.updateProjectionMatrix();
+  }
+
+  /** teleporta o jogador (modo a pé) ou voa a câmera (modo cidade) */
+  goTo(x: number, z: number, distance = 160) {
+    if (this.mode === 'walk') {
+      this.player.spawn(x, z);
+    } else {
+      this.cityCam.flyTo(x, z, distance);
+    }
   }
 
   start() {

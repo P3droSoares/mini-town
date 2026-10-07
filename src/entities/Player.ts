@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { WorldState } from '../world/WorldState';
+import { distSqToSegment } from '../world/geo';
 
 const RADIUS = 0.35;
 const WALK = 4.2;
@@ -71,6 +72,30 @@ export class Player {
   }
 
   private findFree(x: number, z: number) {
+    // prefere a calçada da rua mais próxima (lugar aberto, câmera livre)
+    let best: { x: number; z: number } | null = null;
+    let bestD = 150 * 150;
+    for (const s of this.world.data.streets) {
+      if (['footway', 'path', 'steps', 'track'].includes(s.kind)) continue;
+      for (let i = 0; i < s.points.length - 1; i++) {
+        const [ax, az] = s.points[i];
+        const [bx, bz] = s.points[i + 1];
+        const r = distSqToSegment(x, z, ax, az, bx, bz);
+        if (r.d2 < bestD) {
+          const len = Math.hypot(bx - ax, bz - az) || 1;
+          const off = s.width / 2 + 0.9;
+          // lado da calçada voltado para o ponto pedido
+          const side = Math.sign((bx - ax) * (z - az) - (bz - az) * (x - ax)) || 1;
+          const px = r.cx + (-(bz - az) / len) * off * side;
+          const pz = r.cz + ((bx - ax) / len) * off * side;
+          if (!this.world.buildingAt(px, pz)) {
+            bestD = r.d2;
+            best = { x: px, z: pz };
+          }
+        }
+      }
+    }
+    if (best) return best;
     if (!this.world.buildingAt(x, z)) return { x, z };
     for (let r = 2; r < 80; r += 2)
       for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {

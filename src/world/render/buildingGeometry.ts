@@ -179,7 +179,8 @@ export function writeBuilding(w: GeometryWriter, b: Building, hf: HeightField, d
 
   // paredes
   const rings: Ring[] = [b.outer, ...(b.holes ?? [])];
-  const wallSeed = detail === 'high' ? seedF : seedF; // janelas também no LOD baixo (custo zero)
+  // janelas também no LOD baixo (custo zero); igrejas sem grade de janelas
+  const wallSeed = st.roofKind === 'church' ? 0 : seedF;
   for (const ring of rings) {
     let u = 0;
     for (let i = 0; i < ring.length; i++) {

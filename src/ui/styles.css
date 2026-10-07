@@ -596,8 +596,8 @@ button {
 }
 .runbtn {
   position: fixed;
-  left: calc(var(--gutter) + 150px);
-  bottom: calc(max(var(--gutter), env(safe-area-inset-bottom)) + 20px);
+  left: calc(var(--gutter) + 52px);
+  bottom: calc(max(var(--gutter), env(safe-area-inset-bottom)) + 160px);
   display: none;
 }
 .runbtn.show {

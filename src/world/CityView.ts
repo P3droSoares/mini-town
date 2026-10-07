@@ -135,6 +135,7 @@ export class CityView {
     };
     report(0.02, 'Modelando o relevo…');
     this.terrain = buildTerrainMesh(hf, world.data);
+    this.terrain.geometry.computeBoundsTree();
     this.root.add(this.terrain);
     lap('terreno');
     await nextFrame();

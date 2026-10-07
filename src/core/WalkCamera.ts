@@ -16,7 +16,6 @@ export class WalkCamera {
   private pinch = new Map<number, { x: number; y: number }>();
   private pinchDist = 0;
   private readonly ray = new THREE.Raycaster();
-  private readonly tmp = new THREE.Vector3();
   private readonly target = new THREE.Vector3();
   /** retorna true quando o último ponteiro foi um arraste (não um clique) */
   lastWasDrag = false;
@@ -93,16 +92,30 @@ export class WalkCamera {
   update(dt: number) {
     const s = this.player.state;
     this.target.set(s.x, s.y + 1.6, s.z);
-    const cp = Math.cos(this.pitch);
-    const off = this.tmp.set(Math.sin(this.yaw) * cp, Math.sin(this.pitch), Math.cos(this.yaw) * cp);
-    let dist = this.distance;
     // colisão da câmera com prédios (BVH) — só chunks próximos
-    this.ray.set(this.target, off);
-    this.ray.far = dist;
     const near = this.colliders().filter((o) => o.userData.chunk && o.userData.chunk.center.distanceTo(this.target) < 400);
-    const hit = this.ray.intersectObjects(near, false)[0];
-    if (hit) dist = Math.max(1.2, hit.distance - 0.35);
-    const desired = this.target.clone().addScaledVector(off, dist);
+    const castAt = (pitch: number) => {
+      const cp = Math.cos(pitch);
+      const dir = new THREE.Vector3(Math.sin(this.yaw) * cp, Math.sin(pitch), Math.cos(this.yaw) * cp);
+      this.ray.set(this.target, dir);
+      this.ray.far = this.distance;
+      const hits = this.ray.intersectObjects(near, false);
+      let d = this.distance;
+      for (const h of hits) d = Math.min(d, h.distance - 0.35);
+      return { dir, dist: Math.max(0.8, d) };
+    };
+    let best = castAt(this.pitch);
+    // obstruído (beco/parede atrás): tenta ângulos mais altos, "por cima do ombro"
+    if (best.dist < this.distance * 0.6) {
+      for (const p of [0.7, 1.0, 1.3]) {
+        if (p <= this.pitch) continue;
+        const alt = castAt(p);
+        if (alt.dist > best.dist + 0.5) best = alt;
+        if (alt.dist >= this.distance * 0.8) break;
+      }
+    }
+    this.player.mesh.visible = best.dist > 1.3;
+    const desired = this.target.clone().addScaledVector(best.dir, best.dist);
     const ground = this.world.height.sample(desired.x, desired.z) + 0.6;
     if (desired.y < ground) desired.y = ground;
     // suaviza só a aproximação para não "pular"
