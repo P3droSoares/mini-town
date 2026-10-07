@@ -96,6 +96,17 @@ terreno livre não invadem lotes (nem os ~290 **terrenos vagos reservados**).
 reduz o pixel ratio se o frame passar de ~21 ms; se ainda assim ficar lento, a
 **qualidade adaptativa** desliga SSAO e depois bloom.
 
+## Estilo low-poly (branch `estilo-lowpoly`)
+
+`LOWPOLY` em `src/world/render/style.ts` troca o visual inteiro para estilizado:
+
+- prédios com a **cor média** de cada material (tijolo, telha, concreto...) em vez da textura, sombreamento facetado, vidro chapado que acende à noite, sem sujeira nem interior mapping;
+- ruas, calçadas, gramados e terreno só com cor de vértice, facetados;
+- árvores geométricas (icosaedros deformados, cones nas palmeiras), cor por instância, copa opaca projetando a própria sombra;
+- verdes mais vivos e pós-processamento sem dessaturação.
+
+`LOWPOLY = false` volta ao visual realista.
+
 ## Stack
 
 - **Vite + TypeScript + Three.js** puro (sem framework de UI no loop de render — a UI é DOM
