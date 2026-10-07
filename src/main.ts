@@ -3,6 +3,7 @@ import { PostFX } from './core/PostFX';
 import { StaticJsonWorldSource } from './data/WorldSource';
 import { DayNightSystem } from './systems/DayNightSystem';
 import { TimeSystem } from './systems/TimeSystem';
+import { TrafficSystem } from './systems/TrafficSystem';
 import { Hud } from './ui/Hud';
 import { LoadingScreen } from './ui/LoadingScreen';
 import { Menu } from './ui/Menu';
@@ -39,11 +40,15 @@ async function boot() {
     const time = new TimeSystem();
     const dayNight = new DayNightSystem(game, time);
     game.addSystem(dayNight);
+    const traffic = new TrafficSystem(game, time, dayNight);
+    traffic.density = settings.npcDensity;
+    game.addSystem(traffic);
 
     // UI
     const hud = new Hud(ui, game);
     const postfx = new PostFX(game);
     const menu = new Menu(ui, hud.controls, game, time, dayNight, postfx, settings);
+    menu.onNpcDensity = (v) => (traffic.density = v);
     game.addSystem(menu);
 
     game.start();
