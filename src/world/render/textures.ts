@@ -32,7 +32,7 @@ export class TextureLibrary {
   constructor(
     private readonly renderer: THREE.WebGLRenderer,
     private readonly base: string,
-    private readonly opts: { normalMaps: boolean; anisotropy: number },
+    private readonly opts: { normalMaps: boolean; anisotropy: number; hdriOnly?: boolean },
   ) {}
 
   get(key: TexKey): PbrSet | undefined {
@@ -70,7 +70,7 @@ export class TextureLibrary {
         ),
       );
 
-    for (const [key, t] of Object.entries(manifest.textures)) {
+    for (const [key, t] of Object.entries(this.opts.hdriOnly ? {} : manifest.textures)) {
       const maps = t.maps;
       total += 1 + (maps.nor && this.opts.normalMaps ? 1 : 0) + (maps.arm ? 1 : 0);
       jobs.push(

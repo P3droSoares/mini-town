@@ -70,6 +70,14 @@ export class PostFX {
 
   constructor(private readonly game: Game) {
     game.onResizeHooks.push(() => this.resize());
+    game.onDegrade.push(() => {
+      const q = this.game.quality;
+      if (q.ssao) q.ssao = false;
+      else if (q.bloom) q.bloom = false;
+      else return;
+      console.info('[qualidade] desempenho baixo: efeito desligado', { ssao: q.ssao, bloom: q.bloom });
+      this.rebuild();
+    });
   }
 
   private resize() {

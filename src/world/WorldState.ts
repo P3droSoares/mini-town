@@ -129,6 +129,16 @@ export class WorldState {
     return [...out];
   }
 
+  /** terrenos vagos reservados (sem construção) */
+  get vacantLots(): Lot[] {
+    return (this._vacant ??= this.data.lots.filter((l) => l.vacant && l.outer));
+  }
+  private _vacant: Lot[] | null = null;
+
+  vacantLotAt(x: number, z: number): Lot | undefined {
+    return this.vacantLots.find((l) => pointInPolygon(x, z, l.outer!));
+  }
+
   buildingAt(x: number, z: number): Building | undefined {
     return this.buildingsNear(x, z, 0).find((b) => pointInPolygon(x, z, b.outer, b.holes));
   }

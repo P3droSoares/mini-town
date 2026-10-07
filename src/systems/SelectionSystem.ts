@@ -3,7 +3,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import type { Game, System } from '../core/Game';
-import type { Building } from '../data/types';
+import type { Building, Lot } from '../data/types';
 
 interface Highlight {
   building: Building | null;
@@ -24,6 +24,8 @@ export class SelectionSystem implements System {
   private hover: Highlight;
   private selected: Highlight;
   onSelect: ((b: Building | null) => void) | null = null;
+  /** clique num terreno vago reservado */
+  onSelectLot: ((lot: Lot) => void) | null = null;
 
   constructor(private readonly game: Game) {
     this.ray.firstHitOnly = true;
@@ -103,18 +105,53 @@ export class SelectionSystem implements System {
     if (moved > 6 || !quick || e.button > 0) return; // foi arraste/rotação
     this.setNdc(e);
     const b = this.pick();
-    this.select(b);
+    if (b) return this.select(b);
+    const lot = this.pickLot();
+    if (lot) this.selectLot(lot);
+    else this.select(null);
   };
 
   /** remove destaque sem disparar callback (ex.: painel fechado pela UI) */
   clearSelection() {
     this.setHighlight(this.selected, null);
+    this.selected.lines.visible = false;
   }
 
   select(b: Building | null) {
     this.setHighlight(this.selected, b);
     if (b) this.setHighlight(this.hover, null);
     this.onSelect?.(b);
+  }
+
+  /** terreno vago sob o cursor (raycast no relevo) */
+  private pickLot(): Lot | null {
+    const { camera, view, world } = this.game;
+    this.ray.setFromCamera(this.ndc, camera);
+    const hit = this.ray.intersectObject(view.terrain, false)[0];
+    if (!hit) return null;
+    return world.vacantLotAt(hit.point.x, hit.point.z) ?? null;
+  }
+
+  /** destaca o contorno do lote vago */
+  selectLot(lot: Lot) {
+    this.setHighlight(this.selected, null);
+    this.setHighlight(this.hover, null);
+    const hf = this.game.world.height;
+    const ring = lot.outer!;
+    const pos: number[] = [];
+    for (let i = 0; i < ring.length; i++) {
+      const [ax, az] = ring[i];
+      const [bx, bz] = ring[(i + 1) % ring.length];
+      pos.push(ax, hf.sample(ax, az) + 0.3, az, bx, hf.sample(bx, bz) + 0.3, bz);
+    }
+    const lg = new LineSegmentsGeometry();
+    lg.setPositions(pos);
+    this.selected.lines.geometry.dispose();
+    this.selected.lines.geometry = lg;
+    this.selected.lines.visible = true;
+    this.selected.fill.visible = false;
+    this.selected.building = null;
+    this.onSelectLot?.(lot);
   }
 
   private pick(): Building | null {

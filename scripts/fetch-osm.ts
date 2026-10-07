@@ -23,6 +23,8 @@ import type {
   GreenArea,
   GreenKind,
   Heightmap,
+  LandUse,
+  LandUseKind,
   Lot,
   Poi,
   Railway,
@@ -46,6 +48,7 @@ import {
   simplify,
 } from '../src/world/geo';
 import { generateInfill } from './infill';
+import { ZONING_BY_CATEGORY, classifyBuilding } from '../src/world/classify';
 
 // ---------------------------------------------------------------- config ---
 
@@ -157,6 +160,8 @@ function buildQuery(s: number, w: number, n: number, e: number): string {
   way["natural"~"wood|scrub|grassland"](${bb});
   relation["natural"~"wood|scrub"](${bb});
   way["railway"="rail"](${bb});
+  way["landuse"~"^(residential|commercial|retail|industrial)$"](${bb});
+  relation["landuse"~"^(residential|commercial|retail|industrial)$"](${bb});
   node["name"]["amenity"](${bb});
   node["name"]["shop"](${bb});
   node["name"]["office"](${bb});
@@ -559,6 +564,20 @@ async function main() {
   }
 
   // ---- prédios
+  // ---- zonas de uso do solo (antes dos prédios: usadas na classificação)
+  const landuse: LandUse[] = [];
+  for (const el of elements) {
+    const k = el.tags?.landuse;
+    if (!k || !['residential', 'commercial', 'retail', 'industrial'].includes(k) || el.tags?.building) continue;
+    const polys = el.type === 'way' ? [wayPoly(el, proj)].filter(Boolean) as Poly[] : el.type === 'relation' ? relationPolys(el, proj) : [];
+    polys.forEach((p, i) =>
+      landuse.push({ id: `${el.type}/${el.id}${polys.length > 1 ? '#' + i : ''}`, kind: k as LandUseKind, name: el.tags?.name, outer: p.outer, ...(p.holes.length ? { holes: p.holes } : {}) }),
+    );
+  }
+  // zonas menores primeiro (mais específicas)
+  landuse.sort((a, b) => polygonArea(a.outer) - polygonArea(b.outer));
+  const zoneAt = (x: number, z: number) => landuse.find((l) => pointInPolygon(x, z, l.outer, l.holes))?.kind;
+
   const buildings: Building[] = [];
   const addBuilding = (osmType: 'way' | 'relation', id: number, t: Record<string, string>, poly: Poly, part = 0) => {
     const outer = simplify(poly.outer, 0.15);
@@ -618,6 +637,7 @@ async function main() {
     const idStr = `${osmType}/${id}${part ? `#${part}` : ''}`;
     const lotId = `ITB-${osmType === 'way' ? 'W' : 'R'}${id}${part ? `-${part}` : ''}`;
     const inside = pois.filter((p) => pointInPolygon(p.x, p.z, outer, poly.holes));
+    const category = classifyBuilding(type, inside, zoneAt(c[0], c[1]));
     buildings.push({
       id: idStr,
       osmId: id,
@@ -625,6 +645,7 @@ async function main() {
       lotId,
       name: t.name ?? (inside.length === 1 ? inside[0].name : undefined),
       type,
+      category,
       levels: Math.round(levels * 10) / 10,
       height: round1(height),
       heightFromTag: fromTag,
@@ -694,6 +715,7 @@ async function main() {
 
   // ---- preenchimento procedural das quadras sem prédios mapeados
   const osmCount = buildings.length;
+  const vacantLots: Lot[] = [];
   if (!CONFIG.noInfill) {
     const houses = generateInfill({
       streets,
@@ -703,11 +725,27 @@ async function main() {
       greens,
       half,
       downtownRadius: 420,
+      landuse,
     });
     const usedPois = new Set(buildings.flatMap((b) => b.pois?.map((p) => p.osmId) ?? []));
     for (const h of houses) {
       const c = centroid(h.outer);
       const area = polygonArea(h.outer);
+      if (h.vacant) {
+        vacantLots.push({
+          lotId: h.lotId,
+          buildingId: null,
+          vacant: true,
+          outer: h.outer,
+          area: round1(area),
+          centroid: [round1(c[0]), round1(c[1])],
+          ...(h.streetName ? { address: { street: h.streetName, inferred: true } } : {}),
+          ownerId: null,
+          price: null,
+          zoning: ZONING_BY_CATEGORY[classifyBuilding('house', undefined, zoneAt(c[0], c[1]))],
+        });
+        continue;
+      }
       const inside = pois.filter((p) => !usedPois.has(p.osmId) && pointInPolygon(p.x, p.z, h.outer));
       inside.forEach((p) => usedPois.add(p.osmId));
       buildings.push({
@@ -717,6 +755,7 @@ async function main() {
         lotId: h.lotId,
         name: inside.length === 1 ? inside[0].name : undefined,
         type: inside.length ? 'commercial' : h.type,
+        category: classifyBuilding(inside.length ? 'commercial' : h.type, inside, zoneAt(c[0], c[1])),
         levels: h.levels,
         height: h.levels * 3,
         heightFromTag: false,
@@ -738,14 +777,9 @@ async function main() {
     ...(b.address ? { address: b.address } : {}),
     ownerId: null,
     price: null,
-    zoning: ['house', 'residential', 'apartments', 'detached', 'terrace', 'semidetached_house'].includes(b.type)
-      ? 'residencial'
-      : ['commercial', 'retail', 'office', 'supermarket', 'kiosk'].includes(b.type)
-        ? 'comercial'
-        : ['industrial', 'warehouse'].includes(b.type)
-          ? 'industrial'
-          : 'misto',
+    zoning: ZONING_BY_CATEGORY[b.category],
   }));
+  lots.push(...vacantLots);
 
   const data: CityData = {
     version: 1,
@@ -763,11 +797,12 @@ async function main() {
     waterAreas,
     greens,
     railways,
+    landuse,
   };
   const json = JSON.stringify(data);
   writeFileSync(CONFIG.out, json);
   console.log(
-    `✔ ${CONFIG.out}\n  ${streets.length} ruas, ${buildings.length} prédios (${osmCount} OSM + ${buildings.length - osmCount} gerados), ${waterLines.length + waterAreas.length} água, ` +
+    `✔ ${CONFIG.out}\n  ${streets.length} ruas, ${buildings.length} prédios (${osmCount} OSM + ${buildings.length - osmCount} gerados), ${vacantLots.length} lotes vagos, ${landuse.length} zonas de uso, ${waterLines.length + waterAreas.length} água, ` +
       `${greens.length} áreas verdes, ${railways.length} ferrovias, ${pois.length} POIs — ${(json.length / 1024).toFixed(0)} KB`,
   );
 }

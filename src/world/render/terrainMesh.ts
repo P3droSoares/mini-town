@@ -78,6 +78,8 @@ export function buildTerrainMesh(hf: HeightField, data: CityData, tex: TextureLi
   const low = new THREE.Color(PALETTE.terrainLow);
   const high = new THREE.Color(PALETTE.terrainHigh);
   const tint = new THREE.Color();
+  const soilTint = new THREE.Color('#d9a77c');
+  const urbanTint = new THREE.Color('#c9d99a');
   const maxX = minX + (nx - 1) * cell;
   const maxZ = minZ + (nx - 1) * cell;
 
@@ -113,7 +115,9 @@ export function buildTerrainMesh(hf: HeightField, data: CityData, tex: TextureLi
       // tom macro: encostas altas mais escuras (mata), baixadas mais claras
       const hn = THREE.MathUtils.clamp((y + 10) / 180, 0, 1);
       tint.copy(low).lerp(high, hn);
-      const v = 1 + Math.sin(x * 0.009) * Math.cos(z * 0.011) * 0.08;
+      // estilo diorama: terra exposta e área urbana viram tons pastel na própria cor
+      tint.lerp(soilTint, Math.min(1, soilW) * 0.55).lerp(urbanTint, urban * 0.25);
+      const v = 1 + Math.sin(x * 0.009) * Math.cos(z * 0.011) * 0.05;
       colors[k * 3] = tint.r * v;
       colors[k * 3 + 1] = tint.g * v;
       colors[k * 3 + 2] = tint.b * v;

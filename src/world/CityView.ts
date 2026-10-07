@@ -6,11 +6,11 @@ import type { WorldState } from './WorldState';
 import { GeometryWriter } from './render/GeometryWriter';
 import { writeDrapedPolygon } from './render/areaGeometry';
 import { type BuildingWriters, type FrontTest, WRITER_KEYS, type WriterKey, createWriters, writeBuilding } from './render/buildingGeometry';
-import { createTexturedMaterial, createWallMaterial, worldUniforms } from './render/materials';
+import { createVertexColorMaterial, createWallMaterial, worldUniforms } from './render/materials';
 import { PALETTE, color } from './render/palette';
 import { writeStreet, writeWaterLine } from './render/roadGeometry';
 import { StreetLights } from './render/StreetLights';
-import { createGroundMaterial, buildTerrainMesh } from './render/terrainMesh';
+import { buildTerrainMesh } from './render/terrainMesh';
 import type { TextureLibrary } from './render/textures';
 import { TreeRenderer, scatterTrees } from './render/vegetation';
 
@@ -90,15 +90,13 @@ export class CityView {
   ) {
     this.root.name = 'city';
     this.materials = {
-      walls: createWallMaterial(tex),
-      roofClay: createTexturedMaterial(tex, 'roofClay', 1.3),
-      roofGrey: createTexturedMaterial(tex, 'roofGrey', 1.1),
-      roofFlat: createTexturedMaterial(tex, 'concrete', 0.8),
+      walls: createWallMaterial(),
+      detail: createVertexColorMaterial({ roughness: 0.7 }),
     };
     const off = (f: number) => ({ polygonOffset: true, polygonOffsetFactor: f, polygonOffsetUnits: f });
-    this.roadMaterial = createTexturedMaterial(tex, 'asphalt', 0.8, off(-2));
-    this.walkMaterial = createTexturedMaterial(tex, 'pavement', 0.7, off(-1));
-    this.areaMaterial = createGroundMaterial(tex, off(-1));
+    this.roadMaterial = createVertexColorMaterial({ roughness: 0.85, ...off(-2) });
+    this.walkMaterial = createVertexColorMaterial({ roughness: 0.85, ...off(-1) });
+    this.areaMaterial = createVertexColorMaterial({ roughness: 0.95, ...off(-1) });
     this.waterMaterial = createWaterMaterial(off(-3));
     this.frontTest = (mx, mz, ox, oz) => {
       const dOut = world.distanceToStreet(mx + ox * 3, mz + oz * 3, 30);
@@ -156,7 +154,7 @@ export class CityView {
     await nextFrame();
     const trees = scatterTrees(world, this.quality.trees);
     // (árvores usam grade própria de 500 m — ver TreeRenderer)
-    this.trees = new TreeRenderer(this.tex, this.quality, world.data.bounds);
+    this.trees = new TreeRenderer(this.quality, world.data.bounds);
     lap('arvores');
 
     // água (global, poucas feições)
@@ -194,6 +192,46 @@ export class CityView {
     }
 
     for (const im of this.trees.build(trees)) this.root.add(im);
+
+    // terrenos vagos reservados: terra batida + cerca baixa + placa "à venda"
+    const lotGround = new GeometryWriter();
+    const lotProps = new GeometryWriter();
+    const soil = new THREE.Color('#e6cfa1');
+    const fence = new THREE.Color('#fbf7ee');
+    const sign = new THREE.Color('#e8743b');
+    for (const lot of world.vacantLots) {
+      const ring = lot.outer!;
+      writeDrapedPolygon(lotGround, ring, undefined, hf, soil, 0.09);
+      for (let i = 0; i < ring.length; i++) {
+        const [ax, az] = ring[i];
+        const [bx, bz] = ring[(i + 1) % ring.length];
+        const len = Math.hypot(bx - ax, bz - az);
+        const ux = (bx - ax) / len;
+        const uz = (bz - az) / len;
+        // mourões a cada 2 m + régua
+        for (let t = 0; t <= len; t += 2) {
+          const x = ax + ux * t;
+          const z = az + uz * t;
+          const y = hf.sample(x, z);
+          lotProps.box(x, z, y, y + 0.7, ux, uz, 0.05, 0.05, fence);
+        }
+        const mx = (ax + bx) / 2;
+        const mz = (az + bz) / 2;
+        const my = hf.sample(mx, mz);
+        lotProps.box(mx, mz, my + 0.45, my + 0.55, ux, uz, len / 2, 0.03, fence);
+      }
+      const [cx, cz] = lot.centroid;
+      const cy = hf.sample(cx, cz);
+      lotProps.box(cx, cz, cy, cy + 1.6, 1, 0, 0.05, 0.05, fence);
+      lotProps.box(cx, cz, cy + 1.1, cy + 1.9, 1, 0, 0.7, 0.04, sign);
+    }
+    if (lotGround.vertexCount) {
+      const g = new THREE.Mesh(lotGround.toGeometry(), this.areaMaterial);
+      g.receiveShadow = true;
+      const p = new THREE.Mesh(lotProps.toGeometry(), this.materials.detail);
+      p.castShadow = p.receiveShadow = true;
+      this.root.add(g, p);
+    }
     report(0.94, 'Acendendo os postes…');
     this.streetLights = new StreetLights(world);
     this.root.add(this.streetLights.group);
@@ -206,7 +244,7 @@ export class CityView {
   /** escreve todos os prédios do chunk; retorna malhas por material + spans */
   private buildBuildings(chunk: Chunk, detail: 'high' | 'low') {
     const ws = createWriters();
-    const spans: Record<WriterKey, Span[]> = { walls: [], roofClay: [], roofGrey: [], roofFlat: [] };
+    const spans: Record<WriterKey, Span[]> = { walls: [], detail: [] };
     for (const b of chunk.buildings) {
       const before = WRITER_KEYS.map((k) => ws[k].vertexCount);
       writeBuilding(ws, b, this.world.height, detail, detail === 'high' ? this.frontTest : undefined);
@@ -331,8 +369,8 @@ function createWaterMaterial(extra: THREE.MeshStandardMaterialParameters): THREE
 float along = vFlow.w < 0.0 ? vFlow.x : vWPos.x * 0.7 + vWPos.z * 0.3;
 float across = vFlow.w < 0.0 ? vFlow.y : vWPos.z * 0.05;
 float edge = vFlow.w < 0.0 ? smoothstep(0.0, 0.2, min(vFlow.y, 1.0 - vFlow.y)) : 1.0;
-// água barrenta do Rio Itabirito (minério) mais escura no centro
-diffuseColor.rgb = mix(vec3(0.42, 0.36, 0.26), vec3(0.16, 0.2, 0.18), edge);`,
+// água estilizada: turquesa no centro, clara nas bordas
+diffuseColor.rgb = mix(vec3(0.55, 0.8, 0.85), vec3(0.12, 0.5, 0.68), edge);`,
       )
       .replace(
         '#include <normal_fragment_maps>',

@@ -1,7 +1,15 @@
-import type { Building } from '../data/types';
+import type { Building, Lot } from '../data/types';
 import type { WorldState } from '../world/WorldState';
 import { ICONS, h, svgIcon } from './dom';
 import { ZONING, buildingLabel, poiLabel } from './labels';
+
+const CATEGORY: Record<string, string> = {
+  residential: 'Residencial',
+  commercial: 'Comercial',
+  industrial: 'Industrial',
+  institutional: 'Institucional',
+  religious: 'Religioso',
+};
 
 /**
  * Painel lateral do prédio/lote. O `lotId` exibido aqui é a chave que a
@@ -67,6 +75,8 @@ export class InfoPanel {
         h('dd', {}, addrText),
         h('dt', {}, 'Andares'),
         h('dd', {}, `${levels}${b.heightFromTag ? '' : ' (estimado)'}`),
+        h('dt', {}, 'Uso'),
+        h('dd', {}, CATEGORY[b.category] ?? 'Residencial'),
         h('dt', {}, 'Altura'),
         h('dd', {}, `${b.height.toFixed(1)} m`),
         h('dt', {}, 'Área do lote'),
@@ -100,6 +110,30 @@ export class InfoPanel {
     this.el.classList.add('open');
   }
 
+  /** painel de terreno vago reservado */
+  showLot(lot: Lot) {
+    this.current = null;
+    const addr = lot.address?.street ? `${lot.address.street} (aprox.)` : 'Sem endereço';
+    this.body.replaceChildren(
+      h('div', { class: 'kind' }, 'Terreno vago', h('span', { class: 'tag' }, 'reservado')),
+      h('h2', {}, 'Lote disponível'),
+      h(
+        'dl',
+        {},
+        h('dt', {}, 'Endereço'),
+        h('dd', {}, addr),
+        h('dt', {}, 'Área'),
+        h('dd', {}, `${Math.round(lot.area).toLocaleString('pt-BR')} m²`),
+        h('dt', {}, 'Zoneamento'),
+        h('dd', {}, ZONING[lot.zoning ?? 'misto'] ?? lot.zoning ?? 'Uso misto'),
+        h('dt', {}, 'Proprietário'),
+        h('dd', {}, lot.ownerId ?? 'Sem dono'),
+      ),
+      h('div', { class: 'lot' }, h('span', {}, 'Lote ', h('code', {}, lot.lotId))),
+      h('div', { class: 'note' }, 'Terreno sem construção reservado para o mercado imobiliário (próximo módulo).'),
+    );
+    this.el.classList.add('open');
+  }
   close() {
     this.current = null;
     this.el.classList.remove('open');

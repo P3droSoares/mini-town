@@ -34,7 +34,8 @@ async function boot() {
     await new Promise((r) => setTimeout(r, 0));
     const world = new WorldState(data);
     const settings = loadSettings(isMobile);
-    const quality = PRESETS[settings.quality === 'auto' ? autoQuality(isMobile) : settings.quality];
+    // cópia: a qualidade adaptativa pode desligar efeitos em tempo de execução
+    const quality = { ...PRESETS[settings.quality === 'auto' ? autoQuality(isMobile) : settings.quality] };
     console.info(`[boot] qualidade: ${quality.level}`);
 
     // ---- renderização
@@ -76,9 +77,10 @@ async function boot() {
     menu.onNpcDensity = (v) => (traffic.density = v);
     selection.onSelect = (b) => {
       if (b) panel.show(b);
-      else if (panel.current) panel.close();
+      else panel.close();
     };
     panel.onClose = () => selection.clearSelection();
+    selection.onSelectLot = (lot) => panel.showLot(lot);
     panel.onToast = (m) => hud.toast(m);
     panel.onWalkHere = (b) => {
       if (game.mode === 'city') {
@@ -99,7 +101,7 @@ async function boot() {
     loading.hide();
     console.info(`[boot] cidade pronta em ${Math.round(performance.now())} ms`);
     // acesso para depuração no console
-    Object.assign(window as object, { game, time, traffic });
+    Object.assign(window as object, { game, time, traffic, selection, panel });
   } catch (e) {
     console.error(e);
     loading.error((e as Error).message);

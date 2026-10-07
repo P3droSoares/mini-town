@@ -106,4 +106,5 @@ export const ZONING: Record<string, string> = {
   comercial: 'Comercial',
   industrial: 'Industrial',
   misto: 'Uso misto',
+  institucional: 'Institucional',
 };

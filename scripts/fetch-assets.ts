@@ -2,7 +2,8 @@
  * Baixa texturas PBR e HDRI CC0 do Poly Haven para public/assets/ e gera
  * public/assets/manifest.json (escala física em metros + créditos).
  *
- * Uso: npm run fetch-assets  [-- --res 1k] [-- --refresh]
+ * Uso: npm run fetch-assets  [-- --res 1k] [-- --refresh] [-- --textures]
+ *   (padrão: só o HDRI de iluminação; --textures baixa também as texturas PBR)
  *
  * Todos os assets do Poly Haven são CC0 (domínio público): https://polyhaven.com/license
  */
@@ -21,6 +22,8 @@ function arg(name: string, def: string) {
 }
 const RES = arg('res', '1k');
 const REFRESH = process.argv.includes('--refresh');
+/** texturas PBR só sob demanda (o estilo atual é diorama, cores sólidas) */
+const WITH_TEXTURES = process.argv.includes('--textures');
 
 /** chave usada no jogo -> id no Poly Haven */
 const TEXTURES: Record<string, { id: string; maps: ('diff' | 'nor' | 'arm')[] }> = {
@@ -70,7 +73,7 @@ async function main() {
     hdri: {},
   };
 
-  for (const [key, t] of Object.entries(TEXTURES)) {
+  for (const [key, t] of Object.entries(WITH_TEXTURES ? TEXTURES : {})) {
     const [info, files] = await Promise.all([json(`${API}/info/${t.id}`), json(`${API}/files/${t.id}`)]);
     const maps: Record<string, string> = {};
     for (const m of t.maps) {

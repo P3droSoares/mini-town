@@ -8,6 +8,7 @@ import * as THREE from 'three';
  *  - facade  vec4 (u ao longo da parede, v altura acima do solo, altura total, seed)
  *            seed = 0 => sem janelas (telhados, chão...)
  *  - style   vec4 (cor de acabamento rgb, código de estilo) — constante por prédio
+ *  - aux     vec4 (comprimento da parede, margem, nº de vãos, livre) — layout das janelas
  */
 export class GeometryWriter {
   pos: number[] = [];
@@ -16,8 +17,11 @@ export class GeometryWriter {
   uv: number[] = [];
   fac: number[] = [];
   sty: number[] = [];
+  aux: number[] = [];
   /** estilo corrente aplicado aos próximos vértices */
   style: [number, number, number, number] = [0, 0, 0, 0];
+  /** layout de janelas da parede corrente */
+  wall: [number, number, number, number] = [0, 0, 0, 0];
 
   private static a = new THREE.Vector3();
   private static b = new THREE.Vector3();
@@ -55,6 +59,7 @@ export class GeometryWriter {
       this.nor.push(n.x, n.y, n.z);
       this.col.push(color.r, color.g, color.b);
       this.sty.push(s[0], s[1], s[2], s[3]);
+      this.aux.push(this.wall[0], this.wall[1], this.wall[2], this.wall[3]);
     }
     if (uv) this.uv.push(uv[0], uv[1], uv[i1 * 2], uv[i1 * 2 + 1], uv[i2 * 2], uv[i2 * 2 + 1]);
     else this.uv.push(p0.x, p0.z, p1.x, p1.z, p2.x, p2.z);
@@ -118,6 +123,7 @@ export class GeometryWriter {
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
     g.setAttribute('facade', new THREE.Float32BufferAttribute(this.fac, 4));
     g.setAttribute('style', new THREE.Float32BufferAttribute(this.sty, 4));
+    g.setAttribute('aux', new THREE.Float32BufferAttribute(this.aux, 4));
     return g;
   }
 }

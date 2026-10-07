@@ -14,8 +14,8 @@ npm install
 npm run dev
 ```
 
-Abra http://localhost:5173. O JSON da cidade (`public/data/itabirito.json`) e as
-texturas/HDRI CC0 (`public/assets/`, ~20 MB) já vêm versionados, então não é
+Abra http://localhost:5173. O JSON da cidade (`public/data/itabirito.json`) e o
+HDRI CC0 de iluminação (`public/assets/`) já vêm versionados, então não é
 preciso baixar nada para começar.
 
 Outros scripts:
@@ -23,7 +23,7 @@ Outros scripts:
 | comando | o que faz |
 | --- | --- |
 | `npm run fetch-osm` | baixa OSM (Overpass) + relevo e regenera `public/data/itabirito.json` |
-| `npm run fetch-assets` | baixa texturas PBR e HDRI CC0 do Poly Haven para `public/assets/` (`-- --res 2k` para mais resolução) |
+| `npm run fetch-assets` | baixa o HDRI CC0 (iluminação) do Poly Haven para `public/assets/` (`-- --textures` baixa também texturas PBR) |
 | `npm run build` | typecheck + build de produção em `dist/` |
 | `npm run preview` | serve o build de produção |
 | `npm run typecheck` | só o TypeScript |
@@ -44,32 +44,44 @@ O menu (☰ ou relógio) permite fixar/acelerar a hora, escolher a **qualidade g
 ligar o **efeito maquete (tilt-shift)**, desligar sombras, mostrar FPS e ajustar o
 movimento nas ruas.
 
-## Visual
+## Visual (estilo diorama)
 
-- **Texturas PBR reais** (cor + normal + AO/rugosidade) em escala física: reboco,
-  telha cerâmica, telha cinza, concreto, asfalto, calçada, grama, solo laterítico
-  vermelho (típico da região de minério) e casca de árvore. As texturas são
-  normalizadas pela cor média: dão o detalhe, e a cor vem da paleta de cada prédio.
-- **Iluminação de ambiente por HDRI** (reflexos no vidro, na água e nos carros),
-  sol/lua com sombras suaves, **SSAO** (N8AO) e **bloom** noturno.
-- **Fachadas** geradas no shader (sem geometria extra): janelas com moldura e
-  recuo em relevo, vidro reflexivo, venezianas coloniais, portas, vitrines com
-  letreiro no térreo comercial, barrado colorido, cornija, portões industriais.
-- Telhados com beiral (testeira + forro), ruas com **meio-fio, calçada elevada,
-  faixas de pedestre** e linhas pintadas, pontes com guarda-corpo.
-- **Veículos** com silhueta real (hatch, sedã, SUV, picape, ônibus, caminhão),
-  **pedestres** com anatomia e passo animado na GPU.
-- **Árvores** com copa de cartões de folhagem (copa larga, ipê florido,
-  palmeira-imperial, eucalipto) e **postes de concreto com fiação aérea**.
+Inspirado em cidades-maquete: formas limpas com cantos chanfrados, cores pastel,
+sombras suaves + oclusão de ambiente (SSAO) e peças geométricas de "brinquedo".
+
+**Cada prédio é classificado** (`Building.category`) no pré-processamento por
+tags OSM, estabelecimentos (POIs) dentro dele e zona de uso do solo (`landuse`):
+
+| uso | visual |
+| --- | --- |
+| Residencial (casas) | paredes pastel, telhado laranja de 2/4 águas com beiral, chaminé, porta com marquise, venezianas coloridas, floreiras, sacadas; lajes com jardim na cobertura |
+| Residencial (prédios) | torres de maquete com faixas de laje, sacadas com guarda-corpo, casa de máquinas, caixa-d'água |
+| Comercial | térreo com vitrine, **toldos listrados** por vão e letreiro, ar-condicionado na laje |
+| Industrial | galpões com **telhado dente-de-serra**, portões de enrolar, chaminé listrada, tanques |
+| Institucional | janelas grandes, faixas de laje, marquise de entrada, mastro com bandeira |
+| Religioso | igreja barroca com torres, cúpulas e cruz |
+
+As janelas são desenhadas no shader com o mesmo layout (vãos fixos centralizados
+por parede) usado para posicionar toldos, sacadas e floreiras — por isso as peças
+caem exatamente nos vãos. À noite as janelas acendem como numa maquete iluminada.
+
+**Árvores em todo terreno livre**: tudo dentro da cidade que não é prédio (com
+recuo), rua/calçada, água ou **lote vago reservado** recebe árvores estilizadas
+(copas redondas, pinheiros, ipês amarelos/rosas, palmeiras), em manchas.
+
+**Lotes vagos reservados** (~270): terrenos sem construção gerados junto com o
+preenchimento das quadras (`Lot.vacant`, `buildingId: null`), com cerca e placa;
+clicáveis — base do mercado imobiliário do próximo módulo.
 
 | qualidade | para | o que muda |
 | --- | --- | --- |
-| Alta | desktop | SSAO, bloom, sombras 2048, 12 cartões por copa, LOD a 700 m |
-| Média | celular bom / notebook fraco | sem SSAO, bloom, 8 cartões, LOD a 520 m |
-| Baixa | celular simples | sem pós-processamento, sem normal maps, sombras 1024, menos árvores/NPCs |
+| Alta | desktop | SSAO, bloom, sombras 2048, LOD a 700 m |
+| Média | celular bom / notebook fraco | sem SSAO, bloom, LOD a 520 m |
+| Baixa | celular simples | sem pós-processamento, sombras 1024, menos árvores/NPCs |
 
-"Automática" escolhe pelo dispositivo; além disso a **resolução dinâmica** reduz o
-pixel ratio se o frame passar de ~21 ms e volta a subir quando sobra folga.
+"Automática" escolhe pelo dispositivo. Em tempo real, a **resolução dinâmica**
+reduz o pixel ratio se o frame passar de ~21 ms; se ainda assim ficar lento, a
+**qualidade adaptativa** desliga SSAO e depois bloom.
 
 ## Stack
 
@@ -166,7 +178,7 @@ Dicas:
   [Open Database License (ODbL)](https://www.openstreetmap.org/copyright).
   O arquivo `public/data/itabirito.json` é um banco de dados derivado do OSM e,
   portanto, também está sob a ODbL.
-- Texturas PBR e HDRI: **[Poly Haven](https://polyhaven.com)** — CC0 (domínio público);
+- HDRI de iluminação: **[Poly Haven](https://polyhaven.com)** — CC0 (domínio público);
   lista e autores em `public/assets/manifest.json`.
 - Relevo: tiles **Terrarium** (Mapzen / Tilezen, via AWS Open Data), derivados de
   SRTM (NASA) e outras fontes — ver

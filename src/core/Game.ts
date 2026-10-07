@@ -51,6 +51,8 @@ export class Game {
   renderOverride: (() => void) | null = null;
   readonly onModeChange: ((m: CameraMode) => void)[] = [];
   readonly onResizeHooks: ((w: number, h: number) => void)[] = [];
+  /** chamado quando o desempenho segue ruim mesmo na menor resolução */
+  readonly onDegrade: (() => void)[] = [];
 
   private readonly systems: System[] = [];
   private readonly clock = new THREE.Clock();
@@ -77,7 +79,7 @@ export class Game {
     // atualização manual: só quando algo relevante muda (ver updateShadowCamera)
     r.shadowMap.autoUpdate = false;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 0.9;
+    r.toneMappingExposure = 0.8;
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer = r;
 
@@ -114,6 +116,8 @@ export class Game {
     this.textures = new TextureLibrary(this.renderer, import.meta.env.BASE_URL, {
       normalMaps: this.quality.normalMaps,
       anisotropy: Math.min(this.quality.anisotropy, this.renderer.capabilities.getMaxAnisotropy()),
+      // estilo diorama: cores sólidas; só o HDRI (iluminação de ambiente) é usado
+      hdriOnly: true,
     });
     await this.textures.load((f) => report(f * 0.1, 'Carregando texturas…'));
     this.scene.environment = this.textures.envMap;
@@ -201,6 +205,8 @@ export class Game {
     const min = Math.min(max, 0.75);
     let pr = d.pr;
     if (avg > 21 && pr > min) pr = Math.max(min, pr - 0.15);
+    // já no mínimo e ainda lento: pede para desligar efeitos caros (SSAO, bloom)
+    else if (avg > 24 && pr <= min) this.onDegrade.forEach((f) => f());
     else if (avg < 14 && pr < max) pr = Math.min(max, pr + 0.1);
     if (pr !== d.pr) {
       d.pr = pr;

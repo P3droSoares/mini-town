@@ -49,6 +49,19 @@ export interface Street {
   surface?: string;
 }
 
+/** Uso do imóvel — define o estilo visual e, no futuro, a economia do lote. */
+export type BuildingCategory = 'residential' | 'commercial' | 'industrial' | 'institutional' | 'religious';
+
+export type LandUseKind = 'residential' | 'commercial' | 'retail' | 'industrial';
+
+export interface LandUse {
+  id: string;
+  kind: LandUseKind;
+  name?: string;
+  outer: Ring;
+  holes?: Ring[];
+}
+
 export interface Building {
   /** id estável: "way/<osmId>" ou "relation/<osmId>" */
   id: string;
@@ -59,6 +72,8 @@ export interface Building {
   name?: string;
   /** valor da tag building=* (house, residential, church, ...) */
   type: string;
+  /** uso classificado (tags + POIs + zona de uso do solo) */
+  category: BuildingCategory;
   levels: number;
   /** altura total em metros (paredes, sem telhado) */
   height: number;
@@ -105,7 +120,11 @@ export interface Poi {
  */
 export interface Lot {
   lotId: string;
-  buildingId: string;
+  /** null = terreno vago (reservado, à venda no futuro) */
+  buildingId: string | null;
+  /** polígono do lote — presente em terrenos vagos */
+  outer?: Ring;
+  vacant?: boolean;
   area: number;
   centroid: Vec2;
   address?: Address;
@@ -178,4 +197,6 @@ export interface CityData {
   waterAreas: WaterArea[];
   greens: GreenArea[];
   railways: Railway[];
+  /** zonas de uso do solo do OSM (landuse=*) */
+  landuse: LandUse[];
 }

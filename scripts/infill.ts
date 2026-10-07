@@ -8,7 +8,7 @@
  * Tudo é determinístico (seed = id OSM da rua), então os lotes gerados têm
  * ids estáveis entre execuções com os mesmos dados de entrada.
  */
-import type { GreenArea, Ring, Street, Vec2, WaterArea, WaterLine } from '../src/data/types';
+import type { GreenArea, LandUse, LandUseKind, Ring, Street, Vec2, WaterArea, WaterLine } from '../src/data/types';
 import { distSqToSegment, hashId, mulberry32, pointInPolygon, ringBounds } from '../src/world/geo';
 
 export interface GeneratedHouse {
@@ -18,6 +18,8 @@ export interface GeneratedHouse {
   outer: Ring;
   levels: number;
   type: string;
+  /** terreno vago reservado (sem construção) */
+  vacant?: boolean;
 }
 
 interface Obstacle {
@@ -79,8 +81,11 @@ export function generateInfill(opts: {
   half: number;
   /** área central com mais comércio e prédios mais altos */
   downtownRadius: number;
+  /** zonas de uso do solo (industrial gera galpões maiores) */
+  landuse: LandUse[];
 }): GeneratedHouse[] {
   const { streets, half } = opts;
+  const zoneAt = (x: number, z: number): LandUseKind | undefined => opts.landuse.find((l) => pointInPolygon(x, z, l.outer, l.holes))?.kind;
 
   // obstáculos poligonais (prédios reais, água, praças) e linhas (ruas, rios)
   const polys = new SpatialHash<Obstacle>(25);
@@ -168,8 +173,13 @@ export function generateInfill(opts: {
         const nz = ux * side;
         let t = 2 + rng() * 2;
         while (t < len - 4) {
-          const front = 7 + rng() * 6;
-          const depth = 9 + rng() * 9;
+          // zona do ponto da fachada (aproximada pelo eixo da rua)
+          const zone = zoneAt(ax + ux * t - uz * side * 12, az + uz * t + ux * side * 12);
+          // galpões/oficinas: zona industrial ou vias principais na periferia
+          const farOut = Math.hypot(ax, az) > 520;
+          const industrial = zone === 'industrial' || (farOut && ['primary', 'trunk', 'secondary'].includes(s.kind) && zone !== 'residential' && rng() < 0.35);
+          const front = industrial ? 14 + rng() * 14 : 7 + rng() * 6;
+          const depth = industrial ? 16 + rng() * 16 : 9 + rng() * 9;
           const gap = 0.4 + rng() * 1.2;
           const w = Math.min(front, len - t - 1);
           if (w < 5.5) break;
@@ -207,15 +217,23 @@ export function generateInfill(opts: {
             let levels = r < 0.6 ? 1 : r < 0.9 ? 2 : 3;
             if (downtown && major) levels = r < 0.3 ? 2 : r < 0.75 ? 3 : 4;
             else if (downtown || major) levels = r < 0.4 ? 1 : r < 0.85 ? 2 : 3;
-            const commercial = (downtown && major && rng() < 0.7) || (major && rng() < 0.25);
+            const commercial = zone === 'commercial' || zone === 'retail' || (downtown && major && rng() < 0.7) || (major && rng() < 0.25);
+            // terrenos vagos reservados (futuro mercado imobiliário)
+            const vacant = !industrial && rng() < 0.07;
+            // prédios de apartamentos (estilo maquete) no centro
+            const tower = !industrial && !vacant && downtown && rng() < (major ? 0.12 : 0.05);
+            if (industrial) levels = r < 0.75 ? 1 : 2;
+            if (tower) levels = 5 + Math.floor(rng() * 6);
+            const type = vacant ? 'vacant' : industrial ? 'industrial' : tower ? 'apartments' : commercial ? 'commercial' : 'house';
             const sideTag = side === 1 ? 'D' : 'E';
             out.push({
               id: `gen/${s.id}/${sideTag}${idx}`,
               lotId: `ITB-G${s.id.replace('way/', '').replace('#', '-')}-${sideTag}${idx}`,
               streetName: s.name,
               outer: ring,
-              levels,
-              type: commercial ? 'commercial' : 'house',
+              levels: vacant ? 0 : levels,
+              type,
+              ...(vacant ? { vacant: true } : {}),
             });
             const rb = ringBounds(ring);
             polys.insert({ ring, bounds: rb }, rb.minX, rb.minZ, rb.maxX, rb.maxZ);
