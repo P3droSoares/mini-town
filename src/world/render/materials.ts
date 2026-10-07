@@ -82,7 +82,8 @@ vec3 geoN = normalize(nonPerturbedNormal);
     int li = int(lay + 0.5);
 #ifdef LOWPOLY
     // cor chapada: média da textura (camadas tingíveis já vêm na cor do vértice)
-    if (uLayerTint[li] < 0.5) diffuseColor.rgb *= uLayerNorm[li] * 1.3;
+    // pastilhas (5) ficariam quase pretas: usam só a cor do prédio
+    if (uLayerTint[li] < 0.5 && li != 5) diffuseColor.rgb *= uLayerNorm[li] * 1.3;
 #else
     vec2 auv = vUvM * uLayerScale[li];
     vec3 tex = texture(uAtlas, vec3(auv, lay)).rgb;

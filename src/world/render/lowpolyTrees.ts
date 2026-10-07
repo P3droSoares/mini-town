@@ -83,19 +83,19 @@ export function lowpolyTree(kind: Species, detail: 0 | 1): LowpolyTree {
   const crowns: THREE.BufferGeometry[] = [];
 
   if (kind === Species.Palm) {
-    trunk = trunkGeo(10.4, 0.3, 0.2, seg);
-    // folhas: cones finos e achatados irradiando do topo, caídos
-    const n = detail ? 8 : 5;
+    // estilizada: tronco mais baixo e grosso, levemente curvo; leque cheio
+    trunk = trunkGeo(7.2, 0.36, 0.24, seg, 0.04);
+    const n = detail ? 9 : 6;
     for (let i = 0; i < n; i++) {
-      const f = new THREE.ConeGeometry(0.55, 4.6, 3, 1);
-      f.scale(1, 1, 0.25);
-      f.translate(0, 2.3, 0);
-      f.rotateZ(-1.15 - rng() * 0.35); // inclina para fora e para baixo
-      f.rotateY((i / n) * Math.PI * 2 + rng() * 0.3);
-      f.translate(0, 10.2, 0);
+      const f = new THREE.ConeGeometry(0.85, 4.2, 3, 1);
+      f.scale(1, 1, 0.22);
+      f.translate(0, 2.1, 0);
+      f.rotateZ(-1.0 - rng() * 0.45);
+      f.rotateY((i / n) * Math.PI * 2 + rng() * 0.25);
+      f.translate(0.29, 7.0, 0);
       crowns.push(prep(f));
     }
-    crowns.push(prep(blob(0.55, 1, 1, 1, 0, rng).translate(0, 10.2, 0)));
+    crowns.push(prep(blob(0.75, 1, 0.9, 1, 0, rng).translate(0.29, 7.0, 0)));
   } else if (kind === Species.Eucalyptus) {
     trunk = trunkGeo(9.5, 0.26, 0.12, seg, 0.02);
     crowns.push(prep(blob(1.9, 1, 1.7, 1, detail, rng).translate(0.2, 9.4, 0.1)));
