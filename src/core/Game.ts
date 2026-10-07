@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Player } from '../entities/Player';
 import { CityView } from '../world/CityView';
 import { TextureLibrary } from '../world/render/textures';
+import { installPCSS } from './pcss';
 import type { QualityPreset } from './quality';
 import type { WorldState } from '../world/WorldState';
 import { CityCamera } from './CityCamera';
@@ -75,10 +76,12 @@ export class Game {
     r.setPixelRatio(Math.min(window.devicePixelRatio, q.pixelRatio));
     r.setSize(window.innerWidth, window.innerHeight, false);
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    // PCSS (alta) usa o mapa PCF com patch próprio; senão PCF suave padrão
+    if (q.pcss) installPCSS();
+    r.shadowMap.type = q.pcss ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     // atualização manual: só quando algo relevante muda (ver updateShadowCamera)
     r.shadowMap.autoUpdate = false;
-    r.toneMapping = THREE.ACESFilmicToneMapping;
+    r.toneMapping = THREE.AgXToneMapping;
     r.toneMappingExposure = 0.9;
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer = r;
@@ -95,6 +98,7 @@ export class Game {
     this.shadowExtent = opts.mobile ? 200 : 260;
     const ext = this.shadowExtent;
     Object.assign(s.shadow.camera, { left: -ext, right: ext, top: ext, bottom: -ext, near: 10, far: 1600 });
+    s.shadow.camera.updateProjectionMatrix();
     s.shadow.bias = -0.0004;
     s.shadow.normalBias = 0.6;
     // proxies de copa (layer 1) só entram no passe de sombra

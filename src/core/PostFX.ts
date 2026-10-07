@@ -1,71 +1,42 @@
-import { N8AOPass } from 'n8ao';
+import { N8AOPostPass } from 'n8ao';
+import {
+  BloomEffect,
+  BrightnessContrastEffect,
+  type Effect,
+  EffectComposer,
+  EffectPass,
+  GodRaysEffect,
+  HueSaturationEffect,
+  KernelSize,
+  type Pass,
+  RenderPass,
+  SMAAEffect,
+  SMAAPreset,
+  TiltShiftEffect,
+  ToneMappingEffect,
+  ToneMappingMode,
+  VignetteEffect,
+} from 'postprocessing';
 import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { worldUniforms } from '../world/render/materials';
 import type { Game } from './Game';
 
 /**
- * Pós-processamento conforme a qualidade:
- *  - SSAO (N8AO) — oclusão de ambiente nos cantos, sob beirais, entre casas
- *  - Bloom — luzes de janelas, postes e faróis "brilham" à noite
- *  - Tilt-shift (opcional, menu) — efeito maquete
- * Sem nenhum efeito ligado, renderiza direto (custo zero).
+ * Pós-processamento "cinematográfico" (lib postprocessing — efeitos fundidos
+ * numa única passada):
+ *  - N8AO: oclusão de ambiente (cantos, beirais, contato com o chão)
+ *  - God rays: raios de sol atravessando prédios e árvores
+ *  - Bloom: brilho de janelas, postes, faróis e céu
+ *  - Gradação de cor + vinheta + tone mapping filmico AgX
+ *  - Tilt-shift opcional (efeito maquete)
+ * Qualidade baixa: renderização direta (sem composer).
  */
-const TiltShiftShader = {
-  uniforms: {
-    tDiffuse: { value: null as THREE.Texture | null },
-    uDir: { value: new THREE.Vector2(1, 0) },
-    uResolution: { value: new THREE.Vector2(1, 1) },
-    uFocus: { value: 0.5 },
-    uBand: { value: 0.16 },
-    uStrength: { value: 3.2 },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform vec2 uDir; uniform vec2 uResolution;
-    uniform float uFocus; uniform float uBand; uniform float uStrength;
-    varying vec2 vUv;
-    void main() {
-      float d = max(abs(vUv.y - uFocus) - uBand, 0.0);
-      float r = clamp(d * 3.0, 0.0, 1.0) * uStrength;
-      vec2 o = uDir / uResolution * r;
-      vec4 c = texture2D(tDiffuse, vUv) * 0.2270270270;
-      c += texture2D(tDiffuse, vUv + o * 1.3846153846) * 0.3162162162;
-      c += texture2D(tDiffuse, vUv - o * 1.3846153846) * 0.3162162162;
-      c += texture2D(tDiffuse, vUv + o * 3.2307692308) * 0.0702702703;
-      c += texture2D(tDiffuse, vUv - o * 3.2307692308) * 0.0702702703;
-      gl_FragColor = c;
-    }`,
-};
-
-const GradeShader = {
-  uniforms: { tDiffuse: { value: null as THREE.Texture | null }, uSat: { value: 1.05 }, uVignette: { value: 0.18 } },
-  vertexShader: TiltShiftShader.vertexShader,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform float uSat; uniform float uVignette; varying vec2 vUv;
-    void main() {
-      vec4 c = texture2D(tDiffuse, vUv);
-      float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
-      c.rgb = mix(vec3(l), c.rgb, uSat);
-      float v = smoothstep(0.85, 0.25, length(vUv - 0.5));
-      c.rgb *= mix(1.0 - uVignette, 1.0, v);
-      gl_FragColor = c;
-    }`,
-};
-
 export class PostFX {
   private composer: EffectComposer | null = null;
-  private tilt: ShaderPass[] = [];
-  private grade: ShaderPass | null = null;
-  private bloom: UnrealBloomPass | null = null;
-  private ao: N8AOPass | null = null;
+  private ao: InstanceType<typeof N8AOPostPass> | null = null;
+  private bloom: BloomEffect | null = null;
+  private rays: GodRaysEffect | null = null;
+  private sunMesh: THREE.Mesh;
   tiltShift = false;
 
   constructor(private readonly game: Game) {
@@ -73,21 +44,26 @@ export class PostFX {
     game.onDegrade.push(() => {
       const q = this.game.quality;
       if (q.ssao) q.ssao = false;
+      else if (q.godrays) q.godrays = false;
       else if (q.bloom) q.bloom = false;
       else return;
-      console.info('[qualidade] desempenho baixo: efeito desligado', { ssao: q.ssao, bloom: q.bloom });
+      console.info('[qualidade] desempenho baixo: efeito desligado', { ssao: q.ssao, godrays: q.godrays, bloom: q.bloom });
       this.rebuild();
     });
+    // "sol" visível para os god rays (fonte de luz da máscara)
+    this.sunMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(70, 16, 8),
+      new THREE.MeshBasicMaterial({ color: '#fff2d6', transparent: true, depthWrite: false, fog: false }),
+    );
+    this.sunMesh.frustumCulled = false;
+    this.sunMesh.name = 'sol';
   }
 
   private resize() {
     if (!this.composer) return;
-    const { renderer } = this.game;
-    const size = renderer.getSize(new THREE.Vector2());
+    const size = this.game.renderer.getSize(new THREE.Vector2());
     if (size.x < 2 || size.y < 2) return;
-    this.composer.setPixelRatio(renderer.getPixelRatio());
-    this.composer.setSize(size.x, size.y);
-    this.tilt.forEach((p) => p.uniforms.uResolution.value.set(size.x * renderer.getPixelRatio(), size.y * renderer.getPixelRatio()));
+    this.composer.setSize(size.x, size.y, false);
   }
 
   /** (re)monta a cadeia conforme qualidade + tilt-shift */
@@ -95,56 +71,65 @@ export class PostFX {
     const { renderer, scene, camera, quality } = this.game;
     this.composer?.dispose();
     this.composer = null;
-    this.tilt = [];
-    this.bloom = null;
     this.ao = null;
-    const any = quality.ssao || quality.bloom || this.tiltShift;
+    this.bloom = null;
+    this.rays = null;
+    scene.remove(this.sunMesh);
+    const any = quality.ssao || quality.bloom || quality.godrays || this.tiltShift;
     if (!any) {
+      renderer.toneMapping = THREE.AgXToneMapping;
       this.game.renderOverride = null;
       return;
     }
-    const size = renderer.getSize(new THREE.Vector2());
-    const pr = renderer.getPixelRatio();
-    // MSAA no alvo só sem SSAO (o N8AO pede SMAA no lugar)
-    const rt = new THREE.WebGLRenderTarget(size.x * pr, size.y * pr, {
-      type: THREE.HalfFloatType,
-      samples: quality.ssao || !quality.antialias ? 0 : 4,
+    // o tone mapping passa a ser feito no fim da cadeia (HDR até lá)
+    renderer.toneMapping = THREE.NoToneMapping;
+    const c = new EffectComposer(renderer, {
+      frameBufferType: THREE.HalfFloatType,
+      multisampling: quality.ssao || !quality.antialias ? 0 : 4,
     });
-    const c = new EffectComposer(renderer, rt);
+    c.addPass(new RenderPass(scene, camera));
     if (quality.ssao) {
-      const ao = new N8AOPass(scene, camera, size.x * pr, size.y * pr);
-      ao.configuration.aoRadius = 4;
+      const size = renderer.getSize(new THREE.Vector2());
+      const ao = new N8AOPostPass(scene, camera, size.x, size.y);
+      ao.configuration.aoRadius = 3.5;
       ao.configuration.distanceFalloff = 1.2;
-      ao.configuration.intensity = 2.2;
-      ao.configuration.gammaCorrection = false;
+      ao.configuration.intensity = 3.2;
       ao.configuration.halfRes = true;
+      ao.configuration.gammaCorrection = false;
       ao.setQualityMode('Medium');
-      c.addPass(ao);
+      c.addPass(ao as unknown as Pass);
       this.ao = ao;
-    } else c.addPass(new RenderPass(scene, camera));
+    }
+    const effects: Effect[] = [];
+    if (quality.ssao) effects.push(new SMAAEffect({ preset: SMAAPreset.MEDIUM }));
+    if (quality.godrays) {
+      scene.add(this.sunMesh);
+      this.rays = new GodRaysEffect(camera, this.sunMesh, {
+        density: 0.95,
+        decay: 0.93,
+        weight: 0.35,
+        exposure: 0.5,
+        samples: quality.ssao ? 60 : 40,
+        clampMax: 1,
+        resolutionScale: 0.5,
+        kernelSize: KernelSize.SMALL,
+        blur: true,
+      });
+      effects.push(this.rays);
+    }
     if (quality.bloom) {
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.4, 0.5, 0.92);
-      c.addPass(this.bloom);
+      this.bloom = new BloomEffect({ mipmapBlur: true, intensity: 0.6, luminanceThreshold: 0.85, luminanceSmoothing: 0.2, radius: 0.7 });
+      effects.push(this.bloom);
     }
-    if (this.tiltShift)
-      for (let i = 0; i < 2; i++)
-        for (const dir of [new THREE.Vector2(1, 0), new THREE.Vector2(0, 1)]) {
-          const p = new ShaderPass(TiltShiftShader);
-          p.uniforms.uDir.value = dir;
-          p.uniforms.uResolution.value.set(size.x * pr, size.y * pr);
-          p.uniforms.uStrength.value = i === 0 ? 2.2 : 1.4;
-          this.tilt.push(p);
-          c.addPass(p);
-        }
-    this.grade = new ShaderPass(GradeShader);
-    if (this.tiltShift) {
-      this.grade.uniforms.uSat.value = 1.18;
-      this.grade.uniforms.uVignette.value = 0.28;
-    }
-    c.addPass(this.grade);
-    c.addPass(new OutputPass());
-    if (quality.ssao) c.addPass(new SMAAPass(size.x * pr, size.y * pr));
+    if (this.tiltShift) effects.push(new TiltShiftEffect({ offset: 0.0, rotation: 0, focusArea: 0.35, feather: 0.25, kernelSize: KernelSize.MEDIUM }));
+    // gradação: um pouco mais de contraste/saturação, vinheta suave
+    effects.push(new HueSaturationEffect({ saturation: 0.12 }));
+    effects.push(new BrightnessContrastEffect({ contrast: 0.08 }));
+    effects.push(new VignetteEffect({ offset: 0.32, darkness: 0.45 }));
+    effects.push(new ToneMappingEffect({ mode: ToneMappingMode.AGX }));
+    c.addPass(new EffectPass(camera, ...effects));
     this.composer = c;
+    this.resize();
     this.game.renderOverride = () => this.render();
   }
 
@@ -155,17 +140,16 @@ export class PostFX {
 
   private render() {
     const night = worldUniforms.uNight.value;
-    if (this.bloom) {
-      // de dia só reflexos fortes; à noite as luzes ganham halo
-      this.bloom.strength = 0.12 + night * 0.65;
-      this.bloom.threshold = night > 0.5 ? 0.75 : 0.95;
+    const { camera, sunDir } = this.game;
+    if (this.rays) {
+      // sol acima do horizonte: raios; à noite somem
+      const day = sunDir.y > 0.02 && night < 0.5;
+      this.sunMesh.visible = day;
+      this.sunMesh.position.copy(camera.position).addScaledVector(sunDir, 3200);
+      this.rays.godRaysMaterial.weight = day ? 0.35 * (1 - night) : 0;
     }
-    if (this.ao) this.ao.configuration.intensity = 2.2 * (1 - night * 0.6);
-    const walk = this.game.mode === 'walk';
-    for (const p of this.tilt) {
-      p.uniforms.uFocus.value = walk ? 0.42 : 0.47;
-      p.uniforms.uBand.value = walk ? 0.22 : 0.14;
-    }
+    if (this.bloom) this.bloom.intensity = 0.45 + night * 0.9;
+    if (this.ao) this.ao.configuration.intensity = 3.2 * (1 - night * 0.6);
     this.composer!.render();
   }
 }

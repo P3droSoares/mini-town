@@ -20,3 +20,11 @@ declare module 'n8ao' {
     setSize(width: number, height: number): void;
   }
 }
+declare module 'n8ao' {
+  export class N8AOPostPass {
+    constructor(scene: import('three').Scene, camera: import('three').Camera, width?: number, height?: number);
+    configuration: N8AOPass['configuration'];
+    setQualityMode(mode: 'Performance' | 'Low' | 'Medium' | 'High' | 'Ultra'): void;
+    setSize(width: number, height: number): void;
+  }
+}

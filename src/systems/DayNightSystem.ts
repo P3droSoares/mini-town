@@ -46,18 +46,30 @@ export class DayNightSystem implements System {
   elevationDeg = 0;
   private sunV = { x: 0, y: 1, z: 0 };
   private acc = 1;
+  // iluminação de ambiente gerada do próprio céu (cubemap filtrado)
+  private pmrem: THREE.PMREMGenerator;
+  private envScene = new THREE.Scene();
+  private envRT: THREE.WebGLRenderTarget | null = null;
+  private lastEnvSun = new THREE.Vector3(0, -2, 0);
+  private envAge = 999;
 
   constructor(
     private readonly game: Game,
     private readonly time: TimeSystem,
   ) {
     game.scene.add(this.sky.mesh);
+    game.scene.background = null;
+    this.pmrem = new THREE.PMREMGenerator(game.renderer);
+    const envSky = new THREE.Mesh(this.sky.mesh.geometry, this.sky.envMaterial());
+    envSky.scale.setScalar(100);
+    this.envScene.add(envSky);
     time.onChange(() => (this.acc = 1)); // reaplica na hora
   }
 
   update(dt: number) {
     this.time.update(dt);
     this.sky.uniforms.uTime.value += dt;
+    this.envAge += dt;
     this.sky.follow(this.game.camera);
     // a posição do sol muda devagar: recalcula 4x/s
     this.acc += dt;
@@ -82,18 +94,17 @@ export class DayNightSystem implements System {
     const t = THREE.MathUtils.clamp((elev - k0.elev) / (k1.elev - k0.elev), 0, 1);
 
     const u = this.sky.uniforms;
-    lerpHex(k0.top, k1.top, t, u.uTop.value);
-    lerpHex(k0.horizon, k1.horizon, t, u.uHorizon.value);
     const fog = game.scene.fog as THREE.Fog;
-    fog.color.copy(u.uHorizon.value);
-    (game.scene.background as THREE.Color).copy(u.uHorizon.value);
+    lerpHex(k0.horizon, k1.horizon, t, fog.color);
 
     this.night = THREE.MathUtils.smoothstep(-elev, -6, 6); // 0 dia .. 1 noite
     const sunUp = elev > -3;
     const sunDir = new THREE.Vector3(this.sunV.x, this.sunV.y, this.sunV.z);
-    u.uSunDir.value.copy(sunDir);
-    u.uSunVisible.value = THREE.MathUtils.smoothstep(elev, -2, 1);
+    this.sky.setSun(sunDir);
     lerpHex(k0.sun, k1.sun, t, u.uSunColor.value);
+    (u.uSunColor.value as THREE.Color).multiplyScalar(THREE.MathUtils.lerp(0.25, 1.0, 1 - this.night));
+    // céu mais "denso" (turbidez) perto do horizonte = pôr do sol mais quente
+    u.turbidity.value = THREE.MathUtils.lerp(5, 2.2, THREE.MathUtils.smoothstep(elev, 0, 25));
     // lua: aproximadamente oposta ao sol, sempre um pouco acima do horizonte
     const moon = new THREE.Vector3(-sunDir.x * 0.8 + 0.2, Math.max(0.45, -sunDir.y), -sunDir.z * 0.8 + 0.3).normalize();
     u.uMoonDir.value.copy(moon);
@@ -102,7 +113,8 @@ export class DayNightSystem implements System {
     // luz direcional = sol de dia, lua de noite (mantém sombras suaves)
     const light = game.sun;
     lerpHex(k0.sun, k1.sun, t, light.color);
-    light.intensity = THREE.MathUtils.lerp(k0.sunI, k1.sunI, t);
+    // sol direto bem mais forte que o céu (contraste de sombra realista)
+    light.intensity = THREE.MathUtils.lerp(k0.sunI, k1.sunI, t) * 1.9;
     if (sunUp) game.sunDir.copy(sunDir.y < 0.06 ? sunDir.setY(0.06).normalize() : sunDir);
     else game.sunDir.copy(moon);
 
@@ -110,9 +122,16 @@ export class DayNightSystem implements System {
     lerpHex(k0.hemiGround, k1.hemiGround, t, game.hemi.groundColor);
     game.hemi.intensity = THREE.MathUtils.lerp(k0.hemiI, k1.hemiI, t);
     // com HDRI (IBL) a hemisférica vira só complemento; reflexos somem à noite
-    if (game.scene.environment) {
-      game.hemi.intensity *= 0.45;
-      game.scene.environmentIntensity = THREE.MathUtils.lerp(0.6, 0.05, this.night);
+    game.hemi.intensity *= 0.35;
+    game.scene.environmentIntensity = THREE.MathUtils.lerp(0.42, 0.3, this.night);
+    // regenera o cubemap do céu quando o sol anda ~1° (ou a cada 30 s, nuvens)
+    if (sunDir.distanceTo(this.lastEnvSun) > 0.018 || this.envAge > 30) {
+      this.lastEnvSun.copy(sunDir);
+      this.envAge = 0;
+      const rt = this.pmrem.fromScene(this.envScene, 0, 0.1, 1000);
+      game.scene.environment = rt.texture;
+      this.envRT?.dispose();
+      this.envRT = rt;
     }
 
     // névoa um pouco mais fechada à noite

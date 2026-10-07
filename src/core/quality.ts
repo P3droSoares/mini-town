@@ -14,6 +14,10 @@ export interface QualityPreset {
   /** oclusão de ambiente em tela (N8AO) */
   ssao: boolean;
   bloom: boolean;
+  /** raios de sol volumétricos (god rays em tela) */
+  godrays: boolean;
+  /** sombras PCSS (penumbra realista) */
+  pcss: boolean;
   /** densidade de árvores (0..1) */
   trees: number;
   /** cartões de folhagem por árvore */
@@ -33,6 +37,8 @@ export const PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 1,
     ssao: false,
     bloom: false,
+    godrays: false,
+    pcss: false,
     trees: 0.4,
     leafCards: 5,
     lodDistance: 380,
@@ -46,7 +52,9 @@ export const PRESETS: Record<QualityLevel, QualityPreset> = {
     normalMaps: true,
     anisotropy: 4,
     ssao: false,
-    bloom: false,
+    bloom: true,
+    godrays: true,
+    pcss: false,
     trees: 0.7,
     leafCards: 8,
     lodDistance: 380,
@@ -61,6 +69,8 @@ export const PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 8,
     ssao: true,
     bloom: true,
+    godrays: true,
+    pcss: true,
     trees: 1,
     leafCards: 12,
     lodDistance: 700,
