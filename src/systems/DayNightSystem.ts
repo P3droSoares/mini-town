@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { monoLinear } from '../world/render/mono';
+import { MONO } from '../world/render/style';
 import type { Game, System } from '../core/Game';
 import { worldUniforms } from '../world/render/materials';
 import { Sky } from '../world/render/Sky';
@@ -126,6 +128,13 @@ export class DayNightSystem implements System {
     game.hemi.intensity = THREE.MathUtils.lerp(k0.hemiI, k1.hemiI, t);
     // com HDRI (IBL) a hemisférica vira só complemento; reflexos somem à noite
     game.hemi.intensity *= 0.35;
+    if (MONO) {
+      // luz neutra: o matiz vem só da cor base do mapa
+      light.color.setRGB(1, 1, 1);
+      game.hemi.color.setRGB(1, 1, 1);
+      game.hemi.groundColor.setRGB(0.55, 0.55, 0.55);
+      fog.color.copy(monoLinear).multiplyScalar(THREE.MathUtils.lerp(1.9, 1.0, this.night));
+    }
     game.scene.environmentIntensity = 0.27;
     // regenera o cubemap do céu quando o sol anda ~1° (ou a cada 30 s, nuvens)
     if (sunDir.distanceTo(this.lastEnvSun) > 0.018 || this.envAge > 30) {
@@ -144,10 +153,11 @@ export class DayNightSystem implements System {
     // janelas acesas: mais no começo da noite, poucas de madrugada
     const h = this.time.hours();
     const lit = h >= 17 || h < 1 ? 0.6 : h < 5 ? 0.18 : h < 8 ? 0.35 : 0.4;
-    worldUniforms.uNight.value = this.night;
+    // monocromático: luzes de prédios e postes sempre acesas (o único amarelo)
+    worldUniforms.uNight.value = MONO ? Math.max(this.night, 0.85) : this.night;
     worldUniforms.uLitRatio.value = lit;
     worldUniforms.uSunDirW.value.copy(game.sunDir);
     worldUniforms.uSunCol.value.copy(light.color).multiplyScalar(light.intensity);
-    game.view.streetLights?.setNight(this.night);
+    game.view.streetLights?.setNight(MONO ? Math.max(this.night, 0.85) : this.night);
   }
 }

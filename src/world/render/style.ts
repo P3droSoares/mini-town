@@ -10,3 +10,11 @@ export const LOWPOLY = true;
  * suaves, árvores de copa lisa, sem sombreamento facetado.
  */
 export const SOFT = true;
+
+/**
+ * Monocromático: tudo na cor `MONO_COLOR` (variações só de luz e sombra);
+ * a única outra cor é o amarelo das luzes de prédios e postes.
+ */
+export const MONO = true;
+export const MONO_COLOR = '#2f3246';
+export const MONO_LIGHT = '#ffc04a';

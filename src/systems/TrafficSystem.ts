@@ -5,6 +5,7 @@ import { type GraphEdge, RoadGraph } from '../world/RoadGraph';
 import { SIDEWALK_WIDTH } from '../world/render/roadGeometry';
 import { mulberry32 } from '../world/geo';
 import type { DayNightSystem } from './DayNightSystem';
+import { MONO, MONO_LIGHT } from '../world/render/style';
 import type { TimeSystem } from './TimeSystem';
 
 /** Agente NPC (estado puro; a renderização só lê). */
@@ -102,7 +103,8 @@ export class TrafficSystem implements System {
     const paintMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.45 });
     const glassMat = new THREE.MeshStandardMaterial({ color: '#0e1418', roughness: 0.05, metalness: 0.85 });
     const trimMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.2 });
-    const glowMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    // monocromático: faróis e lanternas no mesmo amarelo das luzes
+    const glowMat = new THREE.MeshBasicMaterial({ vertexColors: !MONO, color: MONO ? MONO_LIGHT : '#ffffff', transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
     models.forEach((model, mi) => {
       const n = Math.max(1, slotsPer[mi]);
       const mk = (geo: THREE.BufferGeometry, mat: THREE.Material, shadow: boolean) => {

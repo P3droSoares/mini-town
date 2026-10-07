@@ -15,6 +15,10 @@ import { loadSettings } from './ui/settings';
 import { StreetSearch } from './ui/StreetSearch';
 import { WorldState } from './world/WorldState';
 import { StreetHighlight } from './world/render/StreetHighlight';
+import { installMono } from './world/render/mono';
+
+// modo monocromático: precisa remendar os shaders antes de qualquer compilação
+installMono();
 
 const isMobile = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad/i.test(navigator.userAgent);
 

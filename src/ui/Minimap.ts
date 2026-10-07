@@ -1,6 +1,12 @@
 import type { Game } from '../core/Game';
 import type { Vec2 } from '../data/types';
 import { h } from './dom';
+import { MONO } from '../world/render/style';
+
+/** cores do minimapa (no modo monocromático: tons de #2f3246 + amarelo) */
+const MM = MONO
+  ? { bg: '#2f3246', wood: '#363a52', green: '#3b3f58', water: '#24263a', foot: '#45496a', street: '#6a6f96', building: '#535878', buildingOsm: '#535878', accent: '#ffc04a', view: 'rgba(255, 192, 74, 0.16)' }
+  : { bg: '#e9e4d4', wood: '#9cc58a', green: '#b9dba0', water: '#8ec5e3', foot: '#d8cbb0', street: '#ffffff', building: '#d8b7a0', buildingOsm: '#c98f6d', accent: '#c2633a', view: 'rgba(194, 99, 58, 0.18)' };
 
 /**
  * Minimapa 2D: base pré-renderizada uma vez (água, verde, ruas, prédios);
@@ -49,7 +55,7 @@ export class Minimap {
     c.width = c.height = this.px;
     const g = c.getContext('2d')!;
     const d = this.game.world.data;
-    g.fillStyle = '#e9e4d4';
+    g.fillStyle = MM.bg;
     g.fillRect(0, 0, this.px, this.px);
     const poly = (ring: Vec2[], fill: string) => {
       g.beginPath();
@@ -76,14 +82,14 @@ export class Minimap {
       g.stroke();
     };
     const s = this.px / (2 * this.range);
-    for (const gr of d.greens) poly(gr.outer, gr.kind === 'wood' ? '#9cc58a' : '#b9dba0');
-    for (const w of d.waterAreas) poly(w.outer, '#8ec5e3');
-    for (const w of d.waterLines) line(w.points, Math.max(1.5, w.width * s), '#8ec5e3');
+    for (const gr of d.greens) poly(gr.outer, gr.kind === 'wood' ? MM.wood : MM.green);
+    for (const w of d.waterAreas) poly(w.outer, MM.water);
+    for (const w of d.waterLines) line(w.points, Math.max(1.5, w.width * s), MM.water);
     for (const st of d.streets) {
       const foot = ['footway', 'path', 'steps', 'cycleway', 'track'].includes(st.kind);
-      line(st.points, Math.max(foot ? 0.6 : 1.2, st.width * s * 1.1), foot ? '#d8cbb0' : '#ffffff');
+      line(st.points, Math.max(foot ? 0.6 : 1.2, st.width * s * 1.1), foot ? MM.foot : MM.street);
     }
-    for (const b of d.buildings) poly(b.outer, b.generated ? '#d8b7a0' : '#c98f6d');
+    for (const b of d.buildings) poly(b.outer, b.generated ? MM.building : MM.buildingOsm);
     return c;
   }
 
@@ -100,7 +106,7 @@ export class Minimap {
     const g = this.ctx;
     g.drawImage(this.base, 0, 0);
     if (this.highlight && performance.now() < this.highlightUntil) {
-      g.strokeStyle = '#c2633a';
+      g.strokeStyle = MM.accent;
       g.lineWidth = 4;
       g.lineCap = 'round';
       for (const l of this.highlight) {
@@ -123,14 +129,14 @@ export class Minimap {
     g.translate(px, pz);
     g.rotate(-ang);
     // cone de visão
-    g.fillStyle = 'rgba(194, 99, 58, 0.18)';
+    g.fillStyle = MM.view;
     g.beginPath();
     g.moveTo(0, 0);
     g.arc(0, 0, game.mode === 'walk' ? 40 : 60, Math.PI / 2 - 0.5, Math.PI / 2 + 0.5);
     g.closePath();
     g.fill();
     // seta
-    g.fillStyle = '#c2633a';
+    g.fillStyle = MM.accent;
     g.strokeStyle = '#fff';
     g.lineWidth = 2;
     g.beginPath();

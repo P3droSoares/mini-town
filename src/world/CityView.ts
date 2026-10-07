@@ -16,7 +16,7 @@ import { StreetLights } from './render/StreetLights';
 import { buildTerrainMesh } from './render/terrainMesh';
 import type { TextureLibrary } from './render/textures';
 import { TreeRenderer, scatterTrees } from './render/vegetation';
-import { LOWPOLY, SOFT } from './render/style';
+import { LOWPOLY, MONO, SOFT } from './render/style';
 
 // BVH para raycast rápido nos prédios
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -90,7 +90,7 @@ export class CityView {
   readonly walkMaterial: THREE.MeshStandardMaterial;
   readonly areaMaterial: THREE.MeshStandardMaterial;
   readonly waterMaterial: THREE.MeshStandardMaterial;
-  readonly poolMaterial = new THREE.MeshStandardMaterial({ color: '#2aa4d8', roughness: 0.04, metalness: 0.1, emissive: '#0b3a52', emissiveIntensity: 0.4 });
+  readonly poolMaterial = new THREE.MeshStandardMaterial({ color: '#2aa4d8', roughness: 0.04, metalness: 0.1, emissive: '#0b3a52', emissiveIntensity: MONO ? 0 : 0.4 });
   private frontTest: FrontTest;
 
   constructor(
