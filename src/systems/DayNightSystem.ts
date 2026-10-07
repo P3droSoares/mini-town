@@ -138,8 +138,8 @@ export class DayNightSystem implements System {
     }
 
     // névoa um pouco mais fechada à noite
-    fog.near = THREE.MathUtils.lerp(500, 350, this.night);
-    fog.far = THREE.MathUtils.lerp(1700, 1300, this.night);
+    fog.near = THREE.MathUtils.lerp(650, 350, this.night);
+    fog.far = THREE.MathUtils.lerp(2100, 1300, this.night);
 
     // janelas acesas: mais no começo da noite, poucas de madrugada
     const h = this.time.hours();
