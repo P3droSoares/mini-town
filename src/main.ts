@@ -29,7 +29,7 @@ async function boot() {
   try {
     // ---- dados do mundo (hoje JSON estático; amanhã, servidor)
     loading.set(0, 'Baixando mapa da cidade…');
-    const source = new StaticJsonWorldSource(`${import.meta.env.BASE_URL}data/cidade.json`);
+    const source = new StaticJsonWorldSource(`${import.meta.env.BASE_URL}data/itabirito.json`);
     const data = await source.load((loaded, total) => {
       const f = total ? loaded / total : 0.5;
       loading.set(f * 0.25, `Baixando mapa da cidade… ${(loaded / 1048576).toFixed(1)} MB`);
@@ -101,7 +101,7 @@ async function boot() {
     };
 
     game.start();
-    loading.set(1, 'Bem-vindo a Vila Aurora!');
+    loading.set(1, 'Bem-vindo a Itabirito!');
     loading.hide();
     console.info(`[boot] cidade pronta em ${Math.round(performance.now())} ms`);
     // acesso para depuração no console
