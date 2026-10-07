@@ -14,14 +14,16 @@ npm install
 npm run dev
 ```
 
-Abra http://localhost:5173. O JSON da cidade já vem versionado em
-`public/data/itabirito.json`, então não é preciso baixar nada para começar.
+Abra http://localhost:5173. O JSON da cidade (`public/data/itabirito.json`) e as
+texturas/HDRI CC0 (`public/assets/`, ~20 MB) já vêm versionados, então não é
+preciso baixar nada para começar.
 
 Outros scripts:
 
 | comando | o que faz |
 | --- | --- |
 | `npm run fetch-osm` | baixa OSM (Overpass) + relevo e regenera `public/data/itabirito.json` |
+| `npm run fetch-assets` | baixa texturas PBR e HDRI CC0 do Poly Haven para `public/assets/` (`-- --res 2k` para mais resolução) |
 | `npm run build` | typecheck + build de produção em `dist/` |
 | `npm run preview` | serve o build de produção |
 | `npm run typecheck` | só o TypeScript |
@@ -38,14 +40,43 @@ Outros scripts:
 | Minimapa | clique para ir até o ponto | toque |
 | `Esc` | fecha painel/menu | — |
 
-O menu (☰ ou relógio) permite fixar/acelerar a hora, ligar o **efeito maquete
-(tilt-shift)**, desligar sombras, mostrar FPS e ajustar o movimento nas ruas.
+O menu (☰ ou relógio) permite fixar/acelerar a hora, escolher a **qualidade gráfica**,
+ligar o **efeito maquete (tilt-shift)**, desligar sombras, mostrar FPS e ajustar o
+movimento nas ruas.
+
+## Visual
+
+- **Texturas PBR reais** (cor + normal + AO/rugosidade) em escala física: reboco,
+  telha cerâmica, telha cinza, concreto, asfalto, calçada, grama, solo laterítico
+  vermelho (típico da região de minério) e casca de árvore. As texturas são
+  normalizadas pela cor média: dão o detalhe, e a cor vem da paleta de cada prédio.
+- **Iluminação de ambiente por HDRI** (reflexos no vidro, na água e nos carros),
+  sol/lua com sombras suaves, **SSAO** (N8AO) e **bloom** noturno.
+- **Fachadas** geradas no shader (sem geometria extra): janelas com moldura e
+  recuo em relevo, vidro reflexivo, venezianas coloniais, portas, vitrines com
+  letreiro no térreo comercial, barrado colorido, cornija, portões industriais.
+- Telhados com beiral (testeira + forro), ruas com **meio-fio, calçada elevada,
+  faixas de pedestre** e linhas pintadas, pontes com guarda-corpo.
+- **Veículos** com silhueta real (hatch, sedã, SUV, picape, ônibus, caminhão),
+  **pedestres** com anatomia e passo animado na GPU.
+- **Árvores** com copa de cartões de folhagem (copa larga, ipê florido,
+  palmeira-imperial, eucalipto) e **postes de concreto com fiação aérea**.
+
+| qualidade | para | o que muda |
+| --- | --- | --- |
+| Alta | desktop | SSAO, bloom, sombras 2048, 12 cartões por copa, LOD a 700 m |
+| Média | celular bom / notebook fraco | sem SSAO, bloom, 8 cartões, LOD a 520 m |
+| Baixa | celular simples | sem pós-processamento, sem normal maps, sombras 1024, menos árvores/NPCs |
+
+"Automática" escolhe pelo dispositivo; além disso a **resolução dinâmica** reduz o
+pixel ratio se o frame passar de ~21 ms e volta a subir quando sobra folga.
 
 ## Stack
 
 - **Vite + TypeScript + Three.js** puro (sem framework de UI no loop de render — a UI é DOM
   leve e o 3D não paga custo de reconciliação).
 - **three-mesh-bvh** para raycast rápido (hover/clique e colisão da câmera).
+- **n8ao** (+ `postprocessing`) para oclusão de ambiente em tela.
 - Pré-processamento em Node com **tsx** + **pngjs** (decodificação dos tiles de relevo).
 
 ## Arquitetura
@@ -53,6 +84,7 @@ O menu (☰ ou relógio) permite fixar/acelerar a hora, ligar o **efeito maquete
 ```
 scripts/
   fetch-osm.ts        Overpass + tiles Terrarium -> CityData (JSON estático)
+  fetch-assets.ts     texturas PBR + HDRI CC0 (Poly Haven) -> public/assets
   infill.ts           preenchimento procedural de quadras (lotes com id estável)
 src/
   data/               contrato de dados (types.ts) e WorldSource (JSON hoje, servidor amanhã)
@@ -61,7 +93,7 @@ src/
     render/           geometria de prédios/ruas/áreas/terreno, materiais, céu, postes, árvores
   entities/           Player, geometrias de NPC
   systems/            TimeSystem, DayNightSystem, TrafficSystem, SelectionSystem
-  core/               Game (loop), câmeras (cidade / a pé), Input, PostFX (tilt-shift)
+  core/               Game (loop), câmeras, Input, PostFX (SSAO/bloom/tilt-shift), quality
   ui/                 HUD, painel do lote, minimapa, busca, menu, joystick, loading
 ```
 
@@ -79,15 +111,22 @@ Princípios:
 
 ### Desempenho
 
-- Prédios fundidos por chunk de 250 m (`BufferGeometryUtils.mergeGeometries`),
-  com **LOD** (telhados simplificados a partir de 650 m) e frustum culling por chunk.
-- Árvores, postes, carros e pedestres em **InstancedMesh**.
+- Prédios em **uma geometria por chunk de 250 m e por material** (escrita direta
+  num buffer único — mesmo efeito de `mergeGeometries`, sem cópias), com **LOD**
+  (telhados simplificados) e frustum culling por chunk.
+- Árvores, postes, carros e pedestres em **InstancedMesh**; NPCs inativos não são
+  desenhados (instâncias compactadas por frame).
+- Árvores: LOD por célula (cartões perto, impostores de 6 triângulos longe) e
+  sombra da copa por proxy simples numa layer só da câmera de sombra.
 - Janelas e luzes noturnas são feitas no shader (atributo de fachada) — nenhuma luz real.
-- Sombras: uma luz direcional cuja câmera de sombra segue o foco (mais nítida no modo a pé).
+- Sombras: uma luz direcional cuja câmera de sombra segue o foco (mais nítida no modo a pé);
+  com a câmera parada o mapa de sombra atualiza a 30 Hz.
 - Celular: mapa de sombra menor, sem MSAA, pixel ratio ≤ 1,5, menos árvores e NPCs.
 - Carregamento progressivo com barra; a construção cede a thread entre fatias de ~40 ms.
 
-Na máquina de desenvolvimento: ~60 draw calls e ~270 mil triângulos na vista padrão.
+Medido na máquina de desenvolvimento (GPU do navegador embutido, 1600×900): qualidade
+alta ~14 ms/frame com sombras estáticas e ~24 ms quando o mapa de sombra atualiza;
+a resolução dinâmica compensa em GPUs mais fracas.
 
 ## Como expandir a área do mapa
 
@@ -127,6 +166,8 @@ Dicas:
   [Open Database License (ODbL)](https://www.openstreetmap.org/copyright).
   O arquivo `public/data/itabirito.json` é um banco de dados derivado do OSM e,
   portanto, também está sob a ODbL.
+- Texturas PBR e HDRI: **[Poly Haven](https://polyhaven.com)** — CC0 (domínio público);
+  lista e autores em `public/assets/manifest.json`.
 - Relevo: tiles **Terrarium** (Mapzen / Tilezen, via AWS Open Data), derivados de
   SRTM (NASA) e outras fontes — ver
   [atribuições do joerd](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
