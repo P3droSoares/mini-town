@@ -862,7 +862,8 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
       break;
     case 'bloco-bnh':
       style = FacadeStyle.slab;
-      wallLayer = rng() < 0.5 ? Layer.panels : Layer.concrete;
+      // painel nervurado parece chapa de galpão: residencial usa reboco/concreto liso
+      wallLayer = rng() < 0.55 ? Layer.plaster : Layer.concrete;
       wallC = pick(PAL.slab, rng());
       roofBand = true;
       break;
