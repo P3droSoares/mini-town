@@ -121,6 +121,9 @@ export class TrafficSystem implements System {
       this.models.push({ model, meshes: [paintMesh, mk(model.glass, glassMat, false), mk(model.trim, trimMat, true)], glow: mk(model.glow, glowMat, false) });
     });
 
+    // ---- carros estacionados junto ao meio-fio (estáticos, instanciados)
+    this.buildParked(models, paintMat, glassMat, trimMat);
+
     // ---- pedestres: 1 InstancedMesh, cores e animação por instância no shader
     this.pedMesh = new THREE.InstancedMesh(pedestrianGeometry(), createPedestrianMaterial(), this.maxPeds);
     this.pedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -147,6 +150,61 @@ export class TrafficSystem implements System {
       return attr;
     });
     game.scene.add(this.pedMesh);
+  }
+
+  /** carros parados nas ruas residenciais (só visual: dão vida à vista aérea) */
+  private buildParked(models: VehicleModel[], paintMat: THREE.Material, glassMat: THREE.Material, trimMat: THREE.Material) {
+    const world = this.game.world;
+    const rng = mulberry32(777);
+    const spots: { x: number; y: number; z: number; yaw: number; m: number }[] = [];
+    const max = Math.round(700 * this.game.quality.npcScale);
+    for (const s of world.data.streets) {
+      if (!['residential', 'tertiary', 'secondary', 'living_street', 'unclassified'].includes(s.kind) || s.width < 6) continue;
+      for (let i = 0; i < s.points.length - 1 && spots.length < max; i++) {
+        const [ax, az] = s.points[i];
+        const [bx, bz] = s.points[i + 1];
+        const len = Math.hypot(bx - ax, bz - az);
+        if (len < 20) continue;
+        const ux = (bx - ax) / len;
+        const uz = (bz - az) / len;
+        for (let t = 10; t < len - 10; t += 6.5) {
+          if (rng() > 0.3) continue;
+          const side = rng() < 0.5 ? 1 : -1;
+          const off = s.width / 2 - 1.05;
+          const x = ax + ux * t - uz * off * side;
+          const z = az + uz * t + ux * off * side;
+          if (!world.isInsideBounds(x, z, -20)) continue;
+          // mão de direção do lado em que está estacionado
+          const yaw = Math.atan2(ux * side, uz * side);
+          spots.push({ x, y: world.height.sample(x, z) + 0.06, z, yaw, m: rng() < 0.45 ? 0 : rng() < 0.6 ? 1 : rng() < 0.7 ? 2 : 3 });
+        }
+      }
+    }
+    const m4p = new THREE.Matrix4();
+    const qq = new THREE.Quaternion();
+    const one = new THREE.Vector3(1, 1, 1);
+    for (let mi = 0; mi < 4; mi++) {
+      const list = spots.filter((p) => p.m === mi);
+      if (!list.length) continue;
+      const parts: [THREE.BufferGeometry, THREE.Material][] = [
+        [models[mi].paint, paintMat],
+        [models[mi].glass, glassMat],
+        [models[mi].trim, trimMat],
+      ];
+      for (const [geo, mat] of parts) {
+        const im = new THREE.InstancedMesh(geo, mat, list.length);
+        list.forEach((p, i) => {
+          qq.setFromAxisAngle(up, p.yaw);
+          m4p.compose(new THREE.Vector3(p.x, p.y, p.z), qq, one);
+          im.setMatrixAt(i, m4p);
+          if (mat === paintMat) im.setColorAt(i, new THREE.Color(CAR_COLORS[Math.floor(rng() * CAR_COLORS.length)]));
+        });
+        im.castShadow = mat !== glassMat;
+        im.receiveShadow = true;
+        im.computeBoundingSphere();
+        this.game.scene.add(im);
+      }
+    }
   }
 
   private newAgent(edges: GraphEdge[]): Agent {

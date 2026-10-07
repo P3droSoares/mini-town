@@ -114,7 +114,7 @@ export class DayNightSystem implements System {
     const light = game.sun;
     lerpHex(k0.sun, k1.sun, t, light.color);
     // sol direto bem mais forte que o céu (contraste de sombra realista)
-    light.intensity = THREE.MathUtils.lerp(k0.sunI, k1.sunI, t) * 2.15;
+    light.intensity = THREE.MathUtils.lerp(k0.sunI, k1.sunI, t) * 2.6;
     if (sunUp) game.sunDir.copy(sunDir.y < 0.06 ? sunDir.setY(0.06).normalize() : sunDir);
     else game.sunDir.copy(moon);
 
@@ -123,7 +123,7 @@ export class DayNightSystem implements System {
     game.hemi.intensity = THREE.MathUtils.lerp(k0.hemiI, k1.hemiI, t);
     // com HDRI (IBL) a hemisférica vira só complemento; reflexos somem à noite
     game.hemi.intensity *= 0.35;
-    game.scene.environmentIntensity = THREE.MathUtils.lerp(0.3, 0.3, this.night);
+    game.scene.environmentIntensity = 0.27;
     // regenera o cubemap do céu quando o sol anda ~1° (ou a cada 30 s, nuvens)
     if (sunDir.distanceTo(this.lastEnvSun) > 0.018 || this.envAge > 30) {
       this.lastEnvSun.copy(sunDir);

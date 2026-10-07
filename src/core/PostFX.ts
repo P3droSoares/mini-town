@@ -130,8 +130,8 @@ export class PostFX {
     // gradação depois do tone mapping (espaço de exibição)
     this.grade = new GradeEffect({ warmth: 1, contrast: 0.4, greenDesat: 0.4 });
     effects.push(this.grade);
-    effects.push(new BrightnessContrastEffect({ brightness: 0.03, contrast: 0.05 }));
-    effects.push(new VignetteEffect({ offset: 0.3, darkness: 0.5 }));
+    effects.push(new BrightnessContrastEffect({ brightness: 0.06, contrast: 0.04 }));
+    effects.push(new VignetteEffect({ offset: 0.35, darkness: 0.35 }));
     c.addPass(new EffectPass(camera, ...effects));
     this.composer = c;
     this.resize();
