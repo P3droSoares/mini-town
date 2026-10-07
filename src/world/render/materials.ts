@@ -79,7 +79,11 @@ vec3 geoN = normalize(nonPerturbedNormal);
     int li = int(lay + 0.5);
     vec2 auv = vUvM * uLayerScale[li];
     vec3 tex = texture(uAtlas, vec3(auv, lay)).rgb;
-    if (uLayerTint[li] > 0.5) tex /= max(uLayerNorm[li], vec3(0.02));
+    if (uLayerTint[li] > 0.5) {
+      tex /= max(uLayerNorm[li], vec3(0.02));
+      // reboco: textura só dá leve relevo (manchas fortes pareciam sujeira)
+      if (li == 0) tex = mix(vec3(1.0), tex, 0.45);
+    }
     else tex *= 1.25;
     diffuseColor.rgb *= tex;
     vec3 nt = texture(uAtlasN, vec3(auv, lay)).xyz * 2.0 - 1.0;
