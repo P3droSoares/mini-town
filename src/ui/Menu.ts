@@ -89,6 +89,21 @@ export class Menu {
       this.onNpcDensity?.(settings.npcDensity);
     });
 
+    const qualitySelect = h(
+      'select',
+      { 'aria-label': 'Qualidade gráfica' },
+      h('option', { value: 'auto' }, `Automática (${game.quality.level === 'high' ? 'alta' : game.quality.level === 'medium' ? 'média' : 'baixa'})`),
+      h('option', { value: 'high' }, 'Alta (SSAO, sombras 4K)'),
+      h('option', { value: 'medium' }, 'Média'),
+      h('option', { value: 'low' }, 'Baixa (celular simples)'),
+    ) as HTMLSelectElement;
+    qualitySelect.value = settings.quality;
+    const qualityNote = h('div', { class: 'credits', hidden: true }, 'Recarregue a página para aplicar. ', h('a', { href: '#', onclick: (e: Event) => { e.preventDefault(); location.reload(); } }, 'Recarregar agora'));
+    qualitySelect.addEventListener('change', () => {
+      settings.quality = qualitySelect.value as Settings['quality'];
+      saveSettings(settings);
+      qualityNote.hidden = false;
+    });
     this.fpsEl = h('div', { class: 'fps card' }, '-- FPS');
     root.append(this.fpsEl);
 
@@ -101,9 +116,11 @@ export class Menu {
       h('label', {}, 'Velocidade', this.speedSelect),
       h('hr'),
       h('h3', {}, 'Visual'),
+      h('label', {}, 'Qualidade gráfica', qualitySelect),
+      qualityNote,
       check('Efeito maquete (tilt-shift)', settings.tiltShift, (v) => {
         settings.tiltShift = v;
-        postfx.setEnabled(v);
+        postfx.setTiltShift(v);
         saveSettings(settings);
       }),
       check('Sombras', settings.shadows, (v) => {
@@ -132,7 +149,8 @@ export class Menu {
     );
     root.append(this.el);
 
-    postfx.setEnabled(settings.tiltShift);
+    postfx.tiltShift = settings.tiltShift;
+    postfx.rebuild();
     this.applyShadows();
     this.fpsEl.classList.toggle('show', settings.showFps);
     time.onChange(() => this.sync());

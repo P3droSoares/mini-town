@@ -109,6 +109,11 @@ export class DayNightSystem implements System {
     lerpHex(k0.hemiSky, k1.hemiSky, t, game.hemi.color);
     lerpHex(k0.hemiGround, k1.hemiGround, t, game.hemi.groundColor);
     game.hemi.intensity = THREE.MathUtils.lerp(k0.hemiI, k1.hemiI, t);
+    // com HDRI (IBL) a hemisférica vira só complemento; reflexos somem à noite
+    if (game.scene.environment) {
+      game.hemi.intensity *= 0.45;
+      game.scene.environmentIntensity = THREE.MathUtils.lerp(0.6, 0.05, this.night);
+    }
 
     // névoa um pouco mais fechada à noite
     fog.near = THREE.MathUtils.lerp(500, 350, this.night);

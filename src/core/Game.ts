@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { Player } from '../entities/Player';
 import { CityView } from '../world/CityView';
+import { TextureLibrary } from '../world/render/textures';
+import type { QualityPreset } from './quality';
 import type { WorldState } from '../world/WorldState';
 import { CityCamera } from './CityCamera';
 import { Input } from './Input';
@@ -10,6 +12,7 @@ export interface GameOptions {
   canvas: HTMLCanvasElement;
   world: WorldState;
   mobile: boolean;
+  quality: QualityPreset;
   onProgress?: (fraction: number, label: string) => void;
 }
 
@@ -29,7 +32,9 @@ export class Game {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly world: WorldState;
-  readonly view: CityView;
+  view!: CityView;
+  textures!: TextureLibrary;
+  readonly quality: QualityPreset;
   readonly cityCam: CityCamera;
   readonly walkCam: WalkCamera;
   readonly player: Player;
@@ -55,18 +60,20 @@ export class Game {
   constructor(private readonly opts: GameOptions) {
     this.world = opts.world;
     this.mobile = opts.mobile;
+    this.quality = opts.quality;
+    const q = opts.quality;
     const r = new THREE.WebGLRenderer({
       canvas: opts.canvas,
-      antialias: !opts.mobile,
+      antialias: q.antialias,
       powerPreference: 'high-performance',
       stencil: false,
     });
-    r.setPixelRatio(Math.min(window.devicePixelRatio, opts.mobile ? 1.5 : 2));
+    r.setPixelRatio(Math.min(window.devicePixelRatio, q.pixelRatio));
     r.setSize(window.innerWidth, window.innerHeight, false);
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.0;
+    r.toneMappingExposure = 0.9;
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer = r;
 
@@ -77,7 +84,7 @@ export class Game {
     // sol com sombras suaves que seguem o foco
     const s = this.sun;
     s.castShadow = true;
-    const size = opts.mobile ? 1024 : 2048;
+    const size = q.shadowMap;
     s.shadow.mapSize.set(size, size);
     this.shadowExtent = opts.mobile ? 200 : 260;
     const ext = this.shadowExtent;
@@ -86,8 +93,6 @@ export class Game {
     s.shadow.normalBias = 0.6;
     this.scene.add(s, s.target, this.hemi);
 
-    this.view = new CityView(this.world);
-    this.scene.add(this.view.root);
     this.cityCam = new CityCamera(this.camera, opts.canvas, this.world);
     this.player = new Player(this.world);
     this.scene.add(this.player.mesh);
@@ -98,7 +103,17 @@ export class Game {
   }
 
   async init() {
-    await this.view.build({ mobile: this.mobile, onProgress: this.opts.onProgress });
+    const report = this.opts.onProgress ?? (() => {});
+    // texturas PBR + HDRI (iluminação de ambiente)
+    this.textures = new TextureLibrary(this.renderer, import.meta.env.BASE_URL, {
+      normalMaps: this.quality.normalMaps,
+      anisotropy: Math.min(this.quality.anisotropy, this.renderer.capabilities.getMaxAnisotropy()),
+    });
+    await this.textures.load((f) => report(f * 0.1, 'Carregando texturas…'));
+    this.scene.environment = this.textures.envMap;
+    this.view = new CityView(this.world, this.textures, this.quality);
+    this.scene.add(this.view.root);
+    await this.view.build({ onProgress: (f, l) => report(0.1 + f * 0.9, l) });
     // compila shaders antes do primeiro frame (evita travadas)
     this.renderer.compile(this.scene, this.camera);
   }

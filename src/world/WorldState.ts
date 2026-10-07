@@ -1,7 +1,7 @@
 import type { Building, CityData, Lot, Street, Vec2 } from '../data/types';
 import { HeightField } from './HeightField';
 import { RoadGraph } from './RoadGraph';
-import { LocalProjection, normalizeText, pointInPolygon, polylineLength, ringBounds } from './geo';
+import { LocalProjection, distSqToSegment, normalizeText, pointInPolygon, polylineLength, ringBounds } from './geo';
 
 export interface StreetGroup {
   name: string;
@@ -73,6 +73,46 @@ export class WorldState {
       g.center = best.points[Math.floor(best.points.length / 2)];
     }
     this.streetGroups = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  }
+
+  /** grade de segmentos de vias de veículos (fachadas frontais, spawn...) */
+  private segGrid: Map<number, { ax: number; az: number; bx: number; bz: number; hw: number }[]> | null = null;
+  private readonly segCell = 25;
+
+  /** distância (m) do ponto até a borda da via de veículos mais próxima (≤ maxR) */
+  distanceToStreet(x: number, z: number, maxR = 40): number {
+    if (!this.segGrid) {
+      this.segGrid = new Map();
+      const c = this.segCell;
+      for (const s of this.data.streets) {
+        if (['footway', 'path', 'steps', 'cycleway', 'track'].includes(s.kind)) continue;
+        for (let i = 0; i < s.points.length - 1; i++) {
+          const [ax, az] = s.points[i];
+          const [bx, bz] = s.points[i + 1];
+          const seg = { ax, az, bx, bz, hw: s.width / 2 };
+          for (let gx = Math.floor(Math.min(ax, bx) / c); gx <= Math.floor(Math.max(ax, bx) / c); gx++)
+            for (let gz = Math.floor(Math.min(az, bz) / c); gz <= Math.floor(Math.max(az, bz) / c); gz++) {
+              const k = this.key(gx, gz);
+              let arr = this.segGrid.get(k);
+              if (!arr) this.segGrid.set(k, (arr = []));
+              arr.push(seg);
+            }
+        }
+      }
+    }
+    const c = this.segCell;
+    let best = maxR;
+    const r = Math.ceil(maxR / c);
+    const gx0 = Math.floor(x / c);
+    const gz0 = Math.floor(z / c);
+    for (let gx = gx0 - r; gx <= gx0 + r; gx++)
+      for (let gz = gz0 - r; gz <= gz0 + r; gz++)
+        for (const s of this.segGrid.get(this.key(gx, gz)) ?? []) {
+          const { d2 } = distSqToSegment(x, z, s.ax, s.az, s.bx, s.bz);
+          const d = Math.sqrt(d2) - s.hw;
+          if (d < best) best = d;
+        }
+    return Math.max(0, best);
   }
 
   private key(gx: number, gz: number) {

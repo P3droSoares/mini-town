@@ -1,14 +1,20 @@
+import { N8AOPass } from 'n8ao';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { worldUniforms } from '../world/render/materials';
 import type { Game } from './Game';
 
 /**
- * Tilt-shift (efeito maquete): desfoque gaussiano separável cuja força
- * cresce com a distância vertical da faixa de foco + leve saturação e
- * vinheta. Só ativo quando ligado no menu (custo zero quando desligado).
+ * Pós-processamento conforme a qualidade:
+ *  - SSAO (N8AO) — oclusão de ambiente nos cantos, sob beirais, entre casas
+ *  - Bloom — luzes de janelas, postes e faróis "brilham" à noite
+ *  - Tilt-shift (opcional, menu) — efeito maquete
+ * Sem nenhum efeito ligado, renderiza direto (custo zero).
  */
 const TiltShiftShader = {
   uniforms: {
@@ -40,7 +46,7 @@ const TiltShiftShader = {
 };
 
 const GradeShader = {
-  uniforms: { tDiffuse: { value: null as THREE.Texture | null }, uSat: { value: 1.18 }, uVignette: { value: 0.28 } },
+  uniforms: { tDiffuse: { value: null as THREE.Texture | null }, uSat: { value: 1.05 }, uVignette: { value: 0.18 } },
   vertexShader: TiltShiftShader.vertexShader,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse; uniform float uSat; uniform float uVignette; varying vec2 vUv;
@@ -56,53 +62,101 @@ const GradeShader = {
 
 export class PostFX {
   private composer: EffectComposer | null = null;
-  private passes: ShaderPass[] = [];
-  enabled = false;
+  private tilt: ShaderPass[] = [];
+  private grade: ShaderPass | null = null;
+  private bloom: UnrealBloomPass | null = null;
+  private ao: N8AOPass | null = null;
+  tiltShift = false;
 
   constructor(private readonly game: Game) {
-    game.onResizeHooks.push((w, h) => {
-      this.composer?.setSize(w, h);
-      this.passes.forEach((p) => p.uniforms.uResolution?.value.set(w, h));
-    });
+    game.onResizeHooks.push(() => this.resize());
   }
 
-  private ensure() {
-    if (this.composer) return;
-    const { renderer, scene, camera } = this.game;
+  private resize() {
+    if (!this.composer) return;
+    const { renderer } = this.game;
     const size = renderer.getSize(new THREE.Vector2());
-    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: this.game.mobile ? 0 : 4 });
-    const c = new EffectComposer(renderer, rt);
-    c.addPass(new RenderPass(scene, camera));
-    // 2 iterações H+V = desfoque mais largo e suave
-    for (let i = 0; i < 2; i++)
-      for (const dir of [new THREE.Vector2(1, 0), new THREE.Vector2(0, 1)]) {
-        const p = new ShaderPass(TiltShiftShader);
-        p.uniforms.uDir.value = dir;
-        p.uniforms.uResolution.value.set(size.x, size.y);
-        p.uniforms.uStrength.value = i === 0 ? 2.2 : 1.4;
-        this.passes.push(p);
-        c.addPass(p);
-      }
-    c.addPass(new ShaderPass(GradeShader));
-    c.addPass(new OutputPass());
-    this.composer = c;
+    this.composer.setPixelRatio(renderer.getPixelRatio());
+    this.composer.setSize(size.x, size.y);
+    this.tilt.forEach((p) => p.uniforms.uResolution.value.set(size.x * renderer.getPixelRatio(), size.y * renderer.getPixelRatio()));
   }
 
-  setEnabled(v: boolean) {
-    this.enabled = v;
-    if (v) {
-      this.ensure();
-      this.game.renderOverride = () => {
-        // no modo a pé o foco é o personagem (um pouco abaixo do centro)
-        const focus = this.game.mode === 'walk' ? 0.42 : 0.47;
-        this.passes.forEach((p) => {
-          p.uniforms.uFocus.value = focus;
-          p.uniforms.uBand.value = this.game.mode === 'walk' ? 0.22 : 0.14;
-        });
-        this.composer!.render();
-      };
-    } else {
+  /** (re)monta a cadeia conforme qualidade + tilt-shift */
+  rebuild() {
+    const { renderer, scene, camera, quality } = this.game;
+    this.composer?.dispose();
+    this.composer = null;
+    this.tilt = [];
+    this.bloom = null;
+    this.ao = null;
+    const any = quality.ssao || quality.bloom || this.tiltShift;
+    if (!any) {
       this.game.renderOverride = null;
+      return;
     }
+    const size = renderer.getSize(new THREE.Vector2());
+    const pr = renderer.getPixelRatio();
+    // MSAA no alvo só sem SSAO (o N8AO pede SMAA no lugar)
+    const rt = new THREE.WebGLRenderTarget(size.x * pr, size.y * pr, {
+      type: THREE.HalfFloatType,
+      samples: quality.ssao || !quality.antialias ? 0 : 4,
+    });
+    const c = new EffectComposer(renderer, rt);
+    if (quality.ssao) {
+      const ao = new N8AOPass(scene, camera, size.x * pr, size.y * pr);
+      ao.configuration.aoRadius = 4;
+      ao.configuration.distanceFalloff = 1.2;
+      ao.configuration.intensity = 2.2;
+      ao.configuration.gammaCorrection = false;
+      ao.configuration.halfRes = true;
+      ao.setQualityMode('Medium');
+      c.addPass(ao);
+      this.ao = ao;
+    } else c.addPass(new RenderPass(scene, camera));
+    if (quality.bloom) {
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.4, 0.5, 0.92);
+      c.addPass(this.bloom);
+    }
+    if (this.tiltShift)
+      for (let i = 0; i < 2; i++)
+        for (const dir of [new THREE.Vector2(1, 0), new THREE.Vector2(0, 1)]) {
+          const p = new ShaderPass(TiltShiftShader);
+          p.uniforms.uDir.value = dir;
+          p.uniforms.uResolution.value.set(size.x * pr, size.y * pr);
+          p.uniforms.uStrength.value = i === 0 ? 2.2 : 1.4;
+          this.tilt.push(p);
+          c.addPass(p);
+        }
+    this.grade = new ShaderPass(GradeShader);
+    if (this.tiltShift) {
+      this.grade.uniforms.uSat.value = 1.18;
+      this.grade.uniforms.uVignette.value = 0.28;
+    }
+    c.addPass(this.grade);
+    c.addPass(new OutputPass());
+    if (quality.ssao) c.addPass(new SMAAPass(size.x * pr, size.y * pr));
+    this.composer = c;
+    this.game.renderOverride = () => this.render();
+  }
+
+  setTiltShift(v: boolean) {
+    this.tiltShift = v;
+    this.rebuild();
+  }
+
+  private render() {
+    const night = worldUniforms.uNight.value;
+    if (this.bloom) {
+      // de dia só reflexos fortes; à noite as luzes ganham halo
+      this.bloom.strength = 0.12 + night * 0.65;
+      this.bloom.threshold = night > 0.5 ? 0.75 : 0.95;
+    }
+    if (this.ao) this.ao.configuration.intensity = 2.2 * (1 - night * 0.6);
+    const walk = this.game.mode === 'walk';
+    for (const p of this.tilt) {
+      p.uniforms.uFocus.value = walk ? 0.42 : 0.47;
+      p.uniforms.uBand.value = walk ? 0.22 : 0.14;
+    }
+    this.composer!.render();
   }
 }

@@ -1,33 +1,25 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
+import type { QualityPreset } from '../core/quality';
 import type { Building } from '../data/types';
 import type { WorldState } from './WorldState';
 import { GeometryWriter } from './render/GeometryWriter';
 import { writeDrapedPolygon } from './render/areaGeometry';
-import { writeBuilding } from './render/buildingGeometry';
-import { createBuildingMaterial, createVertexColorMaterial, worldUniforms } from './render/materials';
+import { type BuildingWriters, type FrontTest, WRITER_KEYS, type WriterKey, createWriters, writeBuilding } from './render/buildingGeometry';
+import { createTexturedMaterial, createWallMaterial, worldUniforms } from './render/materials';
 import { PALETTE, color } from './render/palette';
 import { writeStreet, writeWaterLine } from './render/roadGeometry';
 import { StreetLights } from './render/StreetLights';
-import { buildTerrainMesh } from './render/terrainMesh';
-import { createTreeGeometries, leafColors, scatterTrees, type TreeInstance } from './render/vegetation';
+import { createGroundMaterial, buildTerrainMesh } from './render/terrainMesh';
+import type { TextureLibrary } from './render/textures';
+import { TreeRenderer, scatterTrees } from './render/vegetation';
 
-// BVH para raycast rápido nos prédios mesclados
+// BVH para raycast rápido nos prédios
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 export const CHUNK_SIZE = 250;
-
-/** perfil de construção (ms acumulados), exibido no console */
-const prof: Record<string, number> = {};
-let pt = 0;
-const mark = (k?: string) => {
-  const n = performance.now();
-  if (k) prof[k] = Math.round(((prof[k] ?? 0) + n - pt) * 10) / 10;
-  pt = n;
-};
 
 interface Span {
   building: Building;
@@ -42,24 +34,19 @@ export interface Chunk {
   center: THREE.Vector3;
   group: THREE.Group;
   lod: THREE.LOD;
-  high: THREE.Mesh | null;
-  low: THREE.Mesh | null;
-  /** intervalos de vértices -> prédio, ordenados por start (picking) */
-  spans: Span[];
   buildings: Building[];
   streets: WorldState['data']['streets'];
   greens: WorldState['data']['greens'];
-  trees: TreeInstance[];
 }
 
 export interface BuildOptions {
-  mobile: boolean;
   onProgress?: (fraction: number, label: string) => void;
 }
 
 /**
  * Cede a thread para a UI (barra de progresso) só quando o orçamento de
- * tempo estoura. setTimeout em vez de rAF: rAF é estrangulado em abas ocultas.
+ * tempo estoura. MessageChannel em vez de rAF/setTimeout: não é estrangulado
+ * em abas ocultas.
  */
 let sliceStart = performance.now();
 const channel = new MessageChannel();
@@ -78,7 +65,8 @@ const nextFrame = (force = false) => {
 
 /**
  * Representação 3D da cidade (somente renderização). Lê `WorldState` e
- * monta malhas por chunk, com LOD e geometrias mescladas.
+ * monta, por chunk de 250 m, uma geometria por material (paredes, telhas,
+ * concreto...) com LOD e frustum culling.
  */
 export class CityView {
   readonly root = new THREE.Group();
@@ -87,27 +75,44 @@ export class CityView {
   readonly pickMeshes: THREE.Mesh[] = [];
   terrain!: THREE.Mesh;
   streetLights!: StreetLights;
-  readonly buildingMaterial = createBuildingMaterial();
-  readonly roadMaterial = createVertexColorMaterial({ polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-  readonly walkMaterial = createVertexColorMaterial({ polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  readonly areaMaterial = createVertexColorMaterial({ polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-  readonly waterMaterial = createWaterMaterial({ polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
-  readonly treeMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true });
+  trees!: TreeRenderer;
+  readonly materials: Record<WriterKey, THREE.Material>;
+  readonly roadMaterial: THREE.MeshStandardMaterial;
+  readonly walkMaterial: THREE.MeshStandardMaterial;
+  readonly areaMaterial: THREE.MeshStandardMaterial;
+  readonly waterMaterial: THREE.MeshStandardMaterial;
+  private frontTest: FrontTest;
 
-  constructor(private readonly world: WorldState) {
+  constructor(
+    private readonly world: WorldState,
+    private readonly tex: TextureLibrary,
+    private readonly quality: QualityPreset,
+  ) {
     this.root.name = 'city';
-  }
-
-  private chunkKey(x: number, z: number) {
-    return `${Math.floor(x / CHUNK_SIZE)},${Math.floor(z / CHUNK_SIZE)}`;
+    this.materials = {
+      walls: createWallMaterial(tex),
+      roofClay: createTexturedMaterial(tex, 'roofClay', 1.3),
+      roofGrey: createTexturedMaterial(tex, 'roofGrey', 1.1),
+      roofFlat: createTexturedMaterial(tex, 'concrete', 0.8),
+    };
+    const off = (f: number) => ({ polygonOffset: true, polygonOffsetFactor: f, polygonOffsetUnits: f });
+    this.roadMaterial = createTexturedMaterial(tex, 'asphalt', 0.8, off(-2));
+    this.walkMaterial = createTexturedMaterial(tex, 'pavement', 0.7, off(-1));
+    this.areaMaterial = createGroundMaterial(tex, off(-1));
+    this.waterMaterial = createWaterMaterial(off(-3));
+    this.frontTest = (mx, mz, ox, oz) => {
+      const dOut = world.distanceToStreet(mx + ox * 3, mz + oz * 3, 30);
+      const dIn = world.distanceToStreet(mx - ox * 3, mz - oz * 3, 30);
+      return dOut < 22 && dOut < dIn - 1;
+    };
   }
 
   private chunkFor(x: number, z: number): Chunk {
-    const key = this.chunkKey(x, z);
+    const cx = Math.floor(x / CHUNK_SIZE);
+    const cz = Math.floor(z / CHUNK_SIZE);
+    const key = `${cx},${cz}`;
     let c = this.chunks.get(key);
     if (!c) {
-      const cx = Math.floor(x / CHUNK_SIZE);
-      const cz = Math.floor(z / CHUNK_SIZE);
       const center = new THREE.Vector3((cx + 0.5) * CHUNK_SIZE, 0, (cz + 0.5) * CHUNK_SIZE);
       center.y = this.world.height.sample(center.x, center.z);
       const group = new THREE.Group();
@@ -115,7 +120,7 @@ export class CityView {
       const lod = new THREE.LOD();
       lod.position.copy(center);
       group.add(lod);
-      c = { key, cx, cz, center, group, lod, high: null, low: null, spans: [], buildings: [], streets: [], greens: [], trees: [] };
+      c = { key, cx, cz, center, group, lod, buildings: [], streets: [], greens: [] };
       this.chunks.set(key, c);
     }
     return c;
@@ -125,7 +130,6 @@ export class CityView {
     const { world } = this;
     const hf = world.height;
     const report = opts.onProgress ?? (() => {});
-
     const tm: Record<string, number> = {};
     let t0 = performance.now();
     const lap = (k: string) => {
@@ -133,29 +137,26 @@ export class CityView {
       tm[k] = Math.round((tm[k] ?? 0) + n - t0);
       t0 = n;
     };
+
     report(0.02, 'Modelando o relevo…');
-    this.terrain = buildTerrainMesh(hf, world.data);
+    this.terrain = buildTerrainMesh(hf, world.data, this.tex);
     this.terrain.geometry.computeBoundsTree();
     this.root.add(this.terrain);
     lap('terreno');
     await nextFrame();
 
-    // distribui entidades por chunk
     for (const b of world.data.buildings) this.chunkFor(b.centroid[0], b.centroid[1]).buildings.push(b);
     for (const s of world.data.streets) {
       const m = s.points[Math.floor(s.points.length / 2)];
       this.chunkFor(m[0], m[1]).streets.push(s);
     }
-    for (const g of world.data.greens) {
-      const p = g.outer[0];
-      this.chunkFor(p[0], p[1]).greens.push(g);
-    }
-    lap('indices');
+    for (const g of world.data.greens) this.chunkFor(g.outer[0][0], g.outer[0][1]).greens.push(g);
 
     report(0.08, 'Plantando árvores…');
     await nextFrame();
-    const trees = scatterTrees(world, opts.mobile);
-    for (const t of trees) this.chunkFor(t.x, t.z).trees.push(t);
+    const trees = scatterTrees(world, this.quality.trees);
+    // (árvores usam grade própria de 500 m — ver TreeRenderer)
+    this.trees = new TreeRenderer(this.tex, this.quality);
     lap('arvores');
 
     // água (global, poucas feições)
@@ -180,13 +181,11 @@ export class CityView {
       this.root.add(bm);
     }
 
-    const treeGeos = createTreeGeometries();
-    const leaves = leafColors();
     const list = [...this.chunks.values()];
     let done = 0;
     for (const chunk of list) {
       t0 = performance.now();
-      this.buildChunk(chunk, treeGeos, leaves);
+      this.buildChunk(chunk);
       lap('chunks');
       this.root.add(chunk.group);
       done++;
@@ -194,62 +193,64 @@ export class CityView {
       await nextFrame();
     }
 
+    for (const im of this.trees.build(trees)) this.root.add(im);
     report(0.94, 'Acendendo os postes…');
     this.streetLights = new StreetLights(world);
     this.root.add(this.streetLights.group);
     lap('postes');
-    console.info('[CityView] tempos de construção (ms)', tm, prof, `árvores: ${trees.length}, postes: ${this.streetLights.count}`);
+    console.info('[CityView] tempos de construção (ms)', tm, `árvores: ${trees.length}, postes: ${this.streetLights.count}`);
     await nextFrame();
     report(1, 'Pronto');
   }
 
-  private buildChunk(chunk: Chunk, treeGeos: THREE.BufferGeometry[], leaves: THREE.Color[]) {
-    const hf = this.world.height;
+  /** escreve todos os prédios do chunk; retorna malhas por material + spans */
+  private buildBuildings(chunk: Chunk, detail: 'high' | 'low') {
+    const ws = createWriters();
+    const spans: Record<WriterKey, Span[]> = { walls: [], roofClay: [], roofGrey: [], roofFlat: [] };
+    for (const b of chunk.buildings) {
+      const before = WRITER_KEYS.map((k) => ws[k].vertexCount);
+      writeBuilding(ws, b, this.world.height, detail, detail === 'high' ? this.frontTest : undefined);
+      WRITER_KEYS.forEach((k, i) => {
+        const count = ws[k].vertexCount - before[i];
+        if (count) spans[k].push({ building: b, start: before[i], count });
+      });
+    }
+    const group = new THREE.Group();
     const o = chunk.center;
+    const meshes: THREE.Mesh[] = [];
+    for (const k of WRITER_KEYS) {
+      if (!ws[k].vertexCount) continue;
+      const g = ws[k].toGeometry();
+      g.translate(-o.x, -o.y, -o.z);
+      const m = new THREE.Mesh(g, this.materials[k]);
+      m.receiveShadow = true;
+      m.castShadow = detail === 'high';
+      m.userData = { chunk, spans: spans[k] };
+      group.add(m);
+      meshes.push(m);
+    }
+    return { group, meshes, ws: ws as BuildingWriters };
+  }
 
-    // ---- prédios: alto detalhe (LOD0) e baixo (LOD1), mesclados por chunk
-    mark();
+  private buildChunk(chunk: Chunk) {
+    const hf = this.world.height;
+
+    // ---- prédios: alto detalhe (LOD0) e baixo (LOD1)
     if (chunk.buildings.length) {
-      const highGeos: THREE.BufferGeometry[] = [];
-      const lowGeos: THREE.BufferGeometry[] = [];
-      let vertexOffset = 0;
-      for (const b of chunk.buildings) {
-        const wh = new GeometryWriter();
-        writeBuilding(wh, b, hf, 'high');
-        const g = wh.toGeometry();
-        g.translate(-o.x, -o.y, -o.z);
-        highGeos.push(g);
-        chunk.spans.push({ building: b, start: vertexOffset, count: wh.vertexCount });
-        vertexOffset += wh.vertexCount;
-        const wl = new GeometryWriter();
-        writeBuilding(wl, b, hf, 'low');
-        const gl = wl.toGeometry();
-        gl.translate(-o.x, -o.y, -o.z);
-        lowGeos.push(gl);
+      const high = this.buildBuildings(chunk, 'high');
+      const low = this.buildBuildings(chunk, 'low');
+      for (const m of high.meshes) {
+        m.geometry.computeBoundsTree();
+        this.pickMeshes.push(m);
       }
-      mark('predios.geo');
-      const high = new THREE.Mesh(mergeGeometries(highGeos)!, this.buildingMaterial);
-      const low = new THREE.Mesh(mergeGeometries(lowGeos)!, this.buildingMaterial);
-      highGeos.forEach((g) => g.dispose());
-      lowGeos.forEach((g) => g.dispose());
-      high.castShadow = high.receiveShadow = true;
-      low.receiveShadow = true;
-      high.userData.chunk = chunk;
-      mark('predios.merge');
-      high.geometry.computeBoundsTree();
-      mark('predios.bvh');
-      chunk.high = high;
-      chunk.low = low;
-      chunk.lod.addLevel(high, 0);
-      chunk.lod.addLevel(low, 650);
-      this.pickMeshes.push(high);
+      chunk.lod.addLevel(high.group, 0);
+      chunk.lod.addLevel(low.group, this.quality.lodDistance);
     }
 
     // ---- ruas e calçadas
-    mark();
     const asphalt = new GeometryWriter();
     const walk = new GeometryWriter();
-    for (const s of chunk.streets) writeStreet(asphalt, walk, s, hf);
+    for (const s of chunk.streets) writeStreet(asphalt, walk, s, hf, this.world);
     if (walk.vertexCount) {
       const m = new THREE.Mesh(walk.toGeometry(), this.walkMaterial);
       m.receiveShadow = true;
@@ -262,20 +263,11 @@ export class CityView {
       chunk.group.add(m);
     }
 
-    mark('ruas');
-    // ---- áreas verdes
+    // ---- áreas verdes (grama texturizada, tom pelo vertex color)
     const areas = new GeometryWriter();
     for (const g of chunk.greens) {
-      const c = color(
-        g.kind === 'wood'
-          ? PALETTE.wood
-          : g.kind === 'pitch'
-            ? PALETTE.pitch
-            : g.kind === 'cemetery'
-              ? PALETTE.cemetery
-              : g.kind === 'park' || g.kind === 'garden'
-                ? PALETTE.park
-                : PALETTE.grass,
+      const c = new THREE.Color(
+        g.kind === 'wood' ? PALETTE.wood : g.kind === 'pitch' ? PALETTE.pitch : g.kind === 'cemetery' ? PALETTE.cemetery : g.kind === 'park' || g.kind === 'garden' ? PALETTE.park : PALETTE.grass,
       );
       writeDrapedPolygon(areas, g.outer, g.holes, hf, c, 0.06);
     }
@@ -285,38 +277,15 @@ export class CityView {
       chunk.group.add(m);
     }
 
-    mark('verdes');
-    // ---- árvores (InstancedMesh por tipo, por chunk => frustum culling)
-    for (const kind of [0, 1] as const) {
-      const list = chunk.trees.filter((t) => t.kind === kind);
-      if (!list.length) continue;
-      const im = new THREE.InstancedMesh(treeGeos[kind], this.treeMaterial, list.length);
-      const m = new THREE.Matrix4();
-      const q = new THREE.Quaternion();
-      const s = new THREE.Vector3();
-      const p = new THREE.Vector3();
-      const axis = new THREE.Vector3(0, 1, 0);
-      list.forEach((t, i) => {
-        q.setFromAxisAngle(axis, t.rot);
-        s.setScalar(t.scale);
-        p.set(t.x, t.y, t.z);
-        m.compose(p, q, s);
-        im.setMatrixAt(i, m);
-        im.setColorAt(i, leaves[t.tint]);
-      });
-      im.castShadow = true;
-      im.receiveShadow = false;
-      im.computeBoundingSphere();
-      chunk.group.add(im);
-    }
+    // ---- árvores (InstancedMesh por espécie, por chunk => frustum culling)
+
   }
 
-  /** Converte um hit de raycast em prédio (via intervalo de vértices). */
+  /** Converte um hit de raycast em prédio (via intervalo de vértices da malha). */
   buildingFromHit(hit: THREE.Intersection): Building | undefined {
-    const chunk = hit.object.userData.chunk as Chunk | undefined;
-    if (!chunk || !hit.face) return undefined;
+    const spans = hit.object.userData.spans as Span[] | undefined;
+    if (!spans || !hit.face) return undefined;
     const v = hit.face.a;
-    const spans = chunk.spans;
     let lo = 0;
     let hi = spans.length - 1;
     while (lo <= hi) {
@@ -331,9 +300,13 @@ export class CityView {
 
   /** Geometria isolada de um prédio (para contorno de destaque). */
   buildingGeometry(b: Building): THREE.BufferGeometry {
-    const w = new GeometryWriter();
-    writeBuilding(w, b, this.world.height, 'high');
-    return w.toGeometry();
+    const ws = createWriters();
+    writeBuilding(ws, b, this.world.height, 'high');
+    const all = new GeometryWriter();
+    for (const k of WRITER_KEYS) all.pos.push(...ws[k].pos);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(all.pos, 3));
+    return g;
   }
 
   update(dt: number) {
@@ -341,8 +314,9 @@ export class CityView {
   }
 }
 
+/** Água: lâmina reflexiva (IBL) com ondulação animada na normal. */
 function createWaterMaterial(extra: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: 0.25, metalness: 0.1, ...extra });
+  const m = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: 0.06, metalness: 0.0, ...extra });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = worldUniforms.uTime;
     shader.uniforms.uNight = worldUniforms.uNight;
@@ -356,15 +330,25 @@ function createWaterMaterial(extra: THREE.MeshStandardMaterialParameters): THREE
         `#include <color_fragment>
 float along = vFlow.w < 0.0 ? vFlow.x : vWPos.x * 0.7 + vWPos.z * 0.3;
 float across = vFlow.w < 0.0 ? vFlow.y : vWPos.z * 0.05;
-float r = sin(along * 0.55 - uTime * 1.6 + sin(across * 6.0 + uTime) * 1.5) * 0.5 + 0.5;
-float r2 = sin(along * 1.7 - uTime * 2.3 + across * 9.0) * 0.5 + 0.5;
-float sparkle = smoothstep(0.82, 1.0, r * r2);
-diffuseColor.rgb = mix(diffuseColor.rgb * 0.92, diffuseColor.rgb * 1.12, r);
-diffuseColor.rgb += sparkle * 0.18 * (1.0 - uNight);
-float edge = vFlow.w < 0.0 ? smoothstep(0.0, 0.18, min(vFlow.y, 1.0 - vFlow.y)) : 1.0;
-diffuseColor.rgb = mix(vec3(0.55, 0.62, 0.45), diffuseColor.rgb, edge);`,
+float edge = vFlow.w < 0.0 ? smoothstep(0.0, 0.2, min(vFlow.y, 1.0 - vFlow.y)) : 1.0;
+// água barrenta do Rio Itabirito (minério) mais escura no centro
+diffuseColor.rgb = mix(vec3(0.42, 0.36, 0.26), vec3(0.16, 0.2, 0.18), edge);`,
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+{
+  vec2 p = vec2(along, across * 8.0);
+  float t = uTime;
+  vec2 g = vec2(
+    cos(p.x * 1.3 - t * 1.7) * 0.5 + cos(p.x * 3.1 + p.y * 0.7 - t * 2.6) * 0.3 + cos(vWPos.x * 2.3 + vWPos.z * 1.7 + t * 1.1) * 0.2,
+    sin(p.y * 1.1 + t * 1.3) * 0.4 + sin(vWPos.z * 2.9 - vWPos.x * 1.3 - t * 1.9) * 0.25
+  ) * 0.12;
+  vec3 nW = normalize(vec3(-g.x, 1.0, -g.y));
+  normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);
+}`,
       );
   };
-  m.customProgramCacheKey = () => 'water-v1';
+  m.customProgramCacheKey = () => 'water-v2';
   return m;
 }

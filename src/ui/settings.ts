@@ -1,5 +1,7 @@
 /** Preferências locais do jogador (por navegador). */
 export interface Settings {
+  /** preset de qualidade ('auto' = pelo dispositivo) */
+  quality: 'auto' | 'low' | 'medium' | 'high';
   tiltShift: boolean;
   shadows: boolean;
   showFps: boolean;
@@ -10,6 +12,7 @@ export interface Settings {
 const KEY = 'mini-town:settings:v1';
 
 export const defaultSettings = (mobile: boolean): Settings => ({
+  quality: 'auto',
   tiltShift: false,
   shadows: true,
   showFps: false,

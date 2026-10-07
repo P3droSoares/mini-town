@@ -1,4 +1,5 @@
 import { Game } from './core/Game';
+import { PRESETS, autoQuality } from './core/quality';
 import { PostFX } from './core/PostFX';
 import { StaticJsonWorldSource } from './data/WorldSource';
 import { DayNightSystem } from './systems/DayNightSystem';
@@ -33,12 +34,15 @@ async function boot() {
     await new Promise((r) => setTimeout(r, 0));
     const world = new WorldState(data);
     const settings = loadSettings(isMobile);
+    const quality = PRESETS[settings.quality === 'auto' ? autoQuality(isMobile) : settings.quality];
+    console.info(`[boot] qualidade: ${quality.level}`);
 
     // ---- renderização
     const game = new Game({
       canvas,
       world,
       mobile: isMobile,
+      quality,
       onProgress: (f, label) => loading.set(0.28 + f * 0.7, label),
     });
     await game.init();

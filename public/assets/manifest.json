@@ -1,0 +1,131 @@
+{
+  "license": "CC0 1.0 (Poly Haven)",
+  "source": "https://polyhaven.com",
+  "textures": {
+    "plaster": {
+      "id": "white_plaster_02",
+      "name": "White Plaster 02",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 1,
+      "maps": {
+        "diff": "textures/white_plaster_02/diff_1k.jpg",
+        "nor": "textures/white_plaster_02/nor_1k.jpg",
+        "arm": "textures/white_plaster_02/arm_1k.jpg"
+      }
+    },
+    "roofClay": {
+      "id": "clay_roof_tiles",
+      "name": "Clay Roof Tiles",
+      "authors": [
+        "Amal Kumar"
+      ],
+      "size": 4,
+      "maps": {
+        "diff": "textures/clay_roof_tiles/diff_1k.jpg",
+        "nor": "textures/clay_roof_tiles/nor_1k.jpg",
+        "arm": "textures/clay_roof_tiles/arm_1k.jpg"
+      }
+    },
+    "roofGrey": {
+      "id": "grey_roof_tiles",
+      "name": "Grey Roof Tiles",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 3,
+      "maps": {
+        "diff": "textures/grey_roof_tiles/diff_1k.jpg",
+        "nor": "textures/grey_roof_tiles/nor_1k.jpg",
+        "arm": "textures/grey_roof_tiles/arm_1k.jpg"
+      }
+    },
+    "concrete": {
+      "id": "rough_concrete",
+      "name": "Rough Concrete",
+      "authors": [
+        "Dimitrios Savva"
+      ],
+      "size": 1.23,
+      "maps": {
+        "diff": "textures/rough_concrete/diff_1k.jpg",
+        "nor": "textures/rough_concrete/nor_1k.jpg",
+        "arm": "textures/rough_concrete/arm_1k.jpg"
+      }
+    },
+    "asphalt": {
+      "id": "asphalt_02",
+      "name": "Asphalt 02",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 3,
+      "maps": {
+        "diff": "textures/asphalt_02/diff_1k.jpg",
+        "nor": "textures/asphalt_02/nor_1k.jpg",
+        "arm": "textures/asphalt_02/arm_1k.jpg"
+      }
+    },
+    "pavement": {
+      "id": "concrete_pavement",
+      "name": "Concrete Pavement",
+      "authors": [
+        "Charlotte Baglioni"
+      ],
+      "size": 1.8,
+      "maps": {
+        "diff": "textures/concrete_pavement/diff_1k.jpg",
+        "nor": "textures/concrete_pavement/nor_1k.jpg",
+        "arm": "textures/concrete_pavement/arm_1k.jpg"
+      }
+    },
+    "grass": {
+      "id": "aerial_grass_rock",
+      "name": "Aerial Grass Rock",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 15,
+      "maps": {
+        "diff": "textures/aerial_grass_rock/diff_1k.jpg",
+        "nor": "textures/aerial_grass_rock/nor_1k.jpg"
+      }
+    },
+    "soil": {
+      "id": "red_laterite_soil_stones",
+      "name": "Red Laterite Soil Stones",
+      "authors": [
+        "Amal Kumar"
+      ],
+      "size": 2,
+      "maps": {
+        "diff": "textures/red_laterite_soil_stones/diff_1k.jpg",
+        "nor": "textures/red_laterite_soil_stones/nor_1k.jpg"
+      }
+    },
+    "bark": {
+      "id": "bark_brown_02",
+      "name": "Bark Brown 02",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 1,
+      "maps": {
+        "diff": "textures/bark_brown_02/diff_1k.jpg",
+        "nor": "textures/bark_brown_02/nor_1k.jpg"
+      }
+    }
+  },
+  "hdri": {
+    "sky": {
+      "id": "kloofendal_48d_partly_cloudy_puresky",
+      "name": "Kloofendal 48d Partly Cloudy (Pure Sky)",
+      "authors": [
+        "Greg Zaal",
+        "Jarod Guest"
+      ],
+      "file": "hdri/kloofendal_48d_partly_cloudy_puresky_1k.hdr"
+    }
+  }
+}

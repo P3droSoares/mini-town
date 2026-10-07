@@ -9,9 +9,12 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "fetch-osm": "tsx scripts/fetch-osm.ts"
+    "fetch-osm": "tsx scripts/fetch-osm.ts",
+    "fetch-assets": "tsx scripts/fetch-assets.ts"
   },
   "dependencies": {
+    "n8ao": "^1.10.3",
+    "postprocessing": "^6.39.5",
     "three": "^0.170.0",
     "three-mesh-bvh": "^0.8.3"
   },
