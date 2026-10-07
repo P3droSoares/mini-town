@@ -64,6 +64,9 @@ export class DayNightSystem implements System {
     envSky.scale.setScalar(100);
     this.envScene.add(envSky);
     time.onChange(() => (this.acc = 1)); // reaplica na hora
+    this.apply();
+    // enquadramento inicial com luz lateral
+    game.cityCam.reset(game.sunDir);
   }
 
   update(dt: number) {

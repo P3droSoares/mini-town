@@ -34,11 +34,17 @@ export class CityCamera {
     this.reset();
   }
 
-  reset() {
+  /**
+   * Vista aérea oblíqua olhando o centro e o rio. Com `sunDir`, a câmera fica
+   * de lado para o sol (~110°): luz lateral revela sombras longas e volume —
+   * com o sol atrás da câmera as sombras ficam escondidas atrás dos objetos.
+   */
+  reset(sunDir?: THREE.Vector3) {
     const y = this.world.height.sample(0, 0);
-    // vista aérea oblíqua (~35°), olhando o centro e o rio
     this.controls.target.set(-40, y, 40);
-    this.camera.position.set(-40 - 250, y + 300, 40 - 330);
+    let az = Math.atan2(-330, -250);
+    if (sunDir && sunDir.y > 0.02) az = Math.atan2(sunDir.z, sunDir.x) + Math.PI * 0.62;
+    this.camera.position.set(-40 + Math.cos(az) * 410, y + 300, 40 + Math.sin(az) * 410);
     this.controls.update();
   }
 
