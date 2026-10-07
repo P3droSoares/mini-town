@@ -26,7 +26,7 @@ export class Hud {
     this.topbar = h(
       'div',
       { class: 'topbar' },
-      h('div', { class: 'brand card' }, h('b', {}, 'Itabirito'), h('small', {}, 'Minas Gerais · em miniatura')),
+      h('div', { class: 'brand card' }, h('b', {}, 'Vila Aurora'), h('small', {}, 'cidade planejada · em miniatura')),
       h('div', { class: 'spacer' }),
       this.modeBtn,
     );

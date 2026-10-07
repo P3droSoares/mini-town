@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "fetch-osm": "tsx scripts/fetch-osm.ts",
-    "fetch-assets": "tsx scripts/fetch-assets.ts"
+    "fetch-assets": "tsx scripts/fetch-assets.ts",
+    "generate-city": "tsx scripts/generate-city.ts"
   },
   "dependencies": {
     "n8ao": "^1.10.3",

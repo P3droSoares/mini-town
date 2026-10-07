@@ -13,8 +13,8 @@ export class LoadingScreen {
       'div',
       { class: 'box card', role: 'status', 'aria-live': 'polite' },
       h('div', { class: 'houses', 'aria-hidden': 'true' }, h('span'), h('span'), h('span'), h('span')),
-      h('h1', {}, 'Itabirito em Miniatura'),
-      h('div', { class: 'sub' }, 'Minas Gerais · dados © OpenStreetMap'),
+      h('h1', {}, 'Vila Aurora'),
+      h('div', { class: 'sub' }, 'uma cidade planejada em miniatura'),
       h('div', { class: 'bar' }, this.bar),
       this.label,
     );
