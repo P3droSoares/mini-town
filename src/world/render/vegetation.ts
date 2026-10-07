@@ -453,29 +453,54 @@ export const SHADOW_ONLY_LAYER = 1;
 /** distância (m) da câmera ao centro da célula para trocar por impostores */
 const TREE_LOD_DISTANCE = 170;
 
-/** impostor: 3 quads verticais cruzados com a silhueta da árvore */
-function impostorGeometry(width: number, height: number): THREE.BufferGeometry {
+/**
+ * Impostor: 3 quads verticais cruzados (silhueta lateral) + 2 discos de copa
+ * horizontais (vista de cima). Sem os discos, de cima a árvore vira uma
+ * "estrela" fina — na vista aérea a copa redonda é o que aparece.
+ * Atlas: metade esquerda = lateral; quadrante superior direito = topo.
+ */
+function impostorGeometry(width: number, height: number, crownY: number, palm: boolean): THREE.BufferGeometry {
   const pos: number[] = [];
   const nor: number[] = [];
   const uvs: number[] = [];
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * Math.PI;
-    const dx = Math.cos(a) * (width / 2);
-    const dz = Math.sin(a) * (width / 2);
-    const quad = [
-      [-dx, 0, -dz, 0, 0],
-      [dx, 0, dz, 1, 0],
-      [dx, height, dz, 1, 1],
-      [-dx, height, -dz, 0, 1],
-    ];
+  const push = (q: number[][], n: number[]) => {
     for (const i of [0, 1, 2, 0, 2, 3]) {
-      const [x, y, z, u, v] = quad[i];
+      const [x, y, z, u, v] = q[i];
       pos.push(x, y, z);
-      // normais "para cima e para fora": iluminação parecida com a copa real
-      nor.push(0, 0.85, 0.5);
+      nor.push(...n);
       uvs.push(u, v);
     }
+  };
+  for (let k = 0; k < 3; k++) {
+    const ang = (k / 3) * Math.PI;
+    const dx = Math.cos(ang) * (width / 2);
+    const dz = Math.sin(ang) * (width / 2);
+    push(
+      [
+        [-dx, 0, -dz, 0, 0],
+        [dx, 0, dz, 0.5, 0],
+        [dx, height, dz, 0.5, 1],
+        [-dx, height, -dz, 0, 1],
+      ],
+      [0, 0.85, 0.5],
+    );
   }
+  // discos de copa (vistos de cima)
+  const disc = (r: number, y: number, rot: number) => {
+    const c = Math.cos(rot) * r;
+    const sn = Math.sin(rot) * r;
+    push(
+      [
+        [-c + sn, y, -sn - c, 0.5, 0.5],
+        [c + sn, y, sn - c, 1, 0.5],
+        [c - sn, y, sn + c, 1, 1],
+        [-c - sn, y, -sn + c, 0.5, 1],
+      ],
+      [0, 1, 0],
+    );
+  };
+  disc(width * 0.5, crownY, 0);
+  if (!palm) disc(width * 0.38, crownY + (height - crownY) * 0.45, 0.8);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
@@ -483,12 +508,12 @@ function impostorGeometry(width: number, height: number): THREE.BufferGeometry {
   return g;
 }
 
-/** textura de silhueta (tronco + copa) a partir do atlas de folhas */
+/** atlas do impostor: lateral (esq.) + copa vista de cima (dir. superior) */
 function impostorTexture(leaf: THREE.Texture, kind: Species, crownBottom: number): THREE.Texture {
   const W = 128;
   const H = 256;
   const c = document.createElement('canvas');
-  c.width = W;
+  c.width = W * 2;
   c.height = H;
   const g = c.getContext('2d')!;
   const yb = H * (1 - crownBottom);
@@ -504,7 +529,6 @@ function impostorTexture(leaf: THREE.Texture, kind: Species, crownBottom: number
       g.restore();
     }
   } else {
-    // copa: vários "tufos" do atlas sobrepostos
     const blobs = kind === Species.Eucalyptus ? 7 : 9;
     for (let i = 0; i < blobs; i++) {
       const t = i / blobs;
@@ -514,8 +538,55 @@ function impostorTexture(leaf: THREE.Texture, kind: Species, crownBottom: number
       g.drawImage(img, x, y, bw, bw * 0.9);
     }
   }
+  // ---- copa de cima (quadrante superior direito: 128x128)
+  const S = W;
+  const cx = W + S / 2;
+  const cy = S / 2;
+  const rng = mulberry32(kind * 31 + 7);
+  g.save();
+  g.beginPath();
+  g.arc(cx, cy, S * 0.47, 0, Math.PI * 2);
+  g.clip();
+  if (kind === Species.Palm) {
+    for (let i = 0; i < 9; i++) {
+      g.save();
+      g.translate(cx, cy);
+      g.rotate((i / 9) * Math.PI * 2 + rng() * 0.3);
+      g.drawImage(img, -14, 0, 28, S * 0.5);
+      g.restore();
+    }
+  } else {
+    // tufos sobrepostos formando uma copa cheia e irregular
+    for (let i = 0; i < 26; i++) {
+      const ang = rng() * Math.PI * 2;
+      const r = Math.sqrt(rng()) * S * 0.3;
+      const sz = S * (0.28 + rng() * 0.22);
+      g.drawImage(img, cx + Math.cos(ang) * r - sz / 2, cy + Math.sin(ang) * r - sz / 2, sz, sz);
+    }
+  }
+  g.restore();
+  // borda irregular: recorta com tufos alfa (sem círculo perfeito)
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 18; i++) {
+    const ang = (i / 18) * Math.PI * 2 + rng() * 0.3;
+    const r = S * (0.44 + rng() * 0.06);
+    g.beginPath();
+    g.arc(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r, S * (0.05 + rng() * 0.05), 0, Math.PI * 2);
+    g.fill();
+  }
+  g.globalCompositeOperation = 'source-over';
+  // volume: centro mais claro, borda mais escura
+  const grad = g.createRadialGradient(cx - S * 0.08, cy - S * 0.08, S * 0.05, cx, cy, S * 0.5);
+  grad.addColorStop(0, 'rgba(255,255,230,0.18)');
+  grad.addColorStop(0.7, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, 'rgba(0,20,0,0.35)');
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = grad;
+  g.fillRect(W, 0, S, S);
+  g.globalCompositeOperation = 'source-over';
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
   return t;
 }
 
@@ -567,7 +638,7 @@ export class TreeRenderer {
         side: THREE.DoubleSide,
         roughness: 0.9,
       });
-      return { geo, proxy, impostor: impostorGeometry(width, height), impostorMat };
+      return { geo, proxy, impostor: impostorGeometry(width, height, center.y, k === Species.Palm), impostorMat };
     });
   }
 
