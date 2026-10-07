@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { worldUniforms } from './materials';
+import { LOWPOLY } from './style';
+import { LOWPOLY_TINTS, type LowpolyTree, lowpolyTree } from './lowpolyTrees';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { QualityPreset } from '../../core/quality';
 import type { GreenKind, Ring } from '../../data/types';
@@ -640,12 +642,22 @@ export class TreeRenderer {
   private barkMat: THREE.MeshStandardMaterial;
   private leafMats: Record<string, THREE.MeshStandardMaterial> = {};
   private proxyMat = new THREE.MeshBasicMaterial({ color: '#000000' });
+  /** estilo low-poly: geometria perto/longe por espécie */
+  private lowpoly: { near: LowpolyTree; far: LowpolyTree }[] = [];
+  private lpCrownMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85, metalness: 0 });
+  private lpTrunkMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0 });
 
   constructor(
     tex: TextureLibrary,
     quality: QualityPreset,
     private readonly bounds: { minX: number; minZ: number; maxX: number; maxZ: number },
   ) {
+    if (LOWPOLY) {
+      this.barkMat = this.lpTrunkMat;
+      this.species = [];
+      this.lowpoly = [Species.Broadleaf, Species.Ipe, Species.Palm, Species.Eucalyptus].map((k) => ({ near: lowpolyTree(k, 1), far: lowpolyTree(k, 0) }));
+      return;
+    }
     this.barkMat = new THREE.MeshStandardMaterial({ color: '#8a7766', roughness: 0.95 });
     tex.apply(this.barkMat, 'bark', 1);
     const leafTex: Record<string, THREE.Texture> = {};
@@ -677,6 +689,7 @@ export class TreeRenderer {
   }
 
   build(trees: TreeInstance[], cell = 250): THREE.Object3D[] {
+    if (LOWPOLY) return this.buildLowpoly(trees, cell);
     const cells = new Map<string, TreeInstance[]>();
     for (const t of trees) {
       const k = `${Math.floor(t.x / cell)},${Math.floor(t.z / cell)}`;
@@ -737,6 +750,69 @@ export class TreeRenderer {
         near.add(trunk, leaves);
         if (nearTown) near.add(proxy);
         far.add(imp);
+      }
+      lod.addLevel(near, 0);
+      lod.addLevel(far, TREE_LOD_DISTANCE);
+      out.push(lod);
+    }
+    return out;
+  }
+
+  /** low-poly: copa opaca projeta a própria sombra (sem proxy), longe = 1 malha */
+  private buildLowpoly(trees: TreeInstance[], cell: number): THREE.Object3D[] {
+    const cells = new Map<string, TreeInstance[]>();
+    for (const t of trees) {
+      const k = `${Math.floor(t.x / cell)},${Math.floor(t.z / cell)}`;
+      if (!cells.has(k)) cells.set(k, []);
+      cells.get(k)!.push(t);
+    }
+    const out: THREE.Object3D[] = [];
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const sc = new THREE.Vector3();
+    const p = new THREE.Vector3();
+    const axis = new THREE.Vector3(0, 1, 0);
+    const col = new THREE.Color();
+    const b = this.bounds;
+    for (const [k, list] of cells) {
+      const [gx, gz] = k.split(',').map(Number);
+      const cx = (gx + 0.5) * cell;
+      const cz = (gz + 0.5) * cell;
+      const cy = list.reduce((a, t) => a + t.y, 0) / list.length;
+      const nearTown = cx > b.minX - cell && cx < b.maxX + cell && cz > b.minZ - cell && cz < b.maxZ + cell;
+      const lod = new THREE.LOD();
+      lod.position.set(cx, cy, cz);
+      const near = new THREE.Group();
+      const far = new THREE.Group();
+      for (let kind = 0; kind < this.lowpoly.length; kind++) {
+        const sl = list.filter((t) => t.kind === kind);
+        if (!sl.length) continue;
+        const g = this.lowpoly[kind];
+        const trunk = new THREE.InstancedMesh(g.near.trunk, this.lpTrunkMat, sl.length);
+        const crown = new THREE.InstancedMesh(g.near.crown, this.lpCrownMat, sl.length);
+        const whole = new THREE.InstancedMesh(g.far.whole, this.lpCrownMat, sl.length);
+        const tints = LOWPOLY_TINTS[kind];
+        sl.forEach((t, i) => {
+          q.setFromAxisAngle(axis, t.rot);
+          sc.setScalar(t.scale);
+          p.set(t.x - cx, t.y - cy, t.z - cz);
+          m.compose(p, q, sc);
+          trunk.setMatrixAt(i, m);
+          crown.setMatrixAt(i, m);
+          whole.setMatrixAt(i, m);
+          col.set(tints[Math.floor(t.tint * tints.length) % tints.length]);
+          crown.setColorAt(i, col);
+          whole.setColorAt(i, col);
+        });
+        trunk.castShadow = false;
+        trunk.receiveShadow = true;
+        crown.castShadow = nearTown;
+        crown.receiveShadow = true;
+        whole.castShadow = false;
+        whole.receiveShadow = true;
+        for (const im of [trunk, crown, whole]) im.computeBoundingSphere();
+        near.add(trunk, crown);
+        far.add(whole);
       }
       lod.addLevel(near, 0);
       lod.addLevel(far, TREE_LOD_DISTANCE);

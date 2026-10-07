@@ -16,6 +16,7 @@ import { StreetLights } from './render/StreetLights';
 import { buildTerrainMesh } from './render/terrainMesh';
 import type { TextureLibrary } from './render/textures';
 import { TreeRenderer, scatterTrees } from './render/vegetation';
+import { LOWPOLY } from './render/style';
 
 // BVH para raycast rápido nos prédios
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -304,7 +305,7 @@ export class CityView {
       chunk.lod.addLevel(high.group, 0);
       chunk.lod.addLevel(low.group, this.quality.lodDistance);
       // molduras de janela instanciadas (só perto da câmera — ver update)
-      if (high.ws.windows.length && this.quality.level !== 'low') {
+      if (high.ws.windows.length && this.quality.level !== 'low' && !LOWPOLY) {
         const im = buildWindowMesh(high.ws.windows, this.windowGeometry, this.windowMaterial);
         im.userData.center = chunk.center;
         this.windowMeshes.push(im);

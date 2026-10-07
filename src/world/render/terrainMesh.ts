@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { LOWPOLY } from './style';
 import type { CityData } from '../../data/types';
 import type { HeightField } from '../HeightField';
 import { PALETTE } from './palette';
@@ -11,6 +12,7 @@ import type { TextureLibrary } from './textures';
  */
 export function createGroundMaterial(tex: TextureLibrary, extra: THREE.MeshStandardMaterialParameters = {}) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, ...extra });
+  if (LOWPOLY) return lowpolyGround(tex, m);
   tex.apply(m, 'grass', 0.8);
   const soil = tex.get('soil');
   const grass = tex.get('grass');
@@ -45,6 +47,27 @@ export function createGroundMaterial(tex: TextureLibrary, extra: THREE.MeshStand
       .replace('#include <color_fragment>', '#ifndef USE_MAP\n#include <color_fragment>\n#endif');
   };
   m.customProgramCacheKey = () => `ground-v2-${!!soil}`;
+  return m;
+}
+
+/** chão low-poly: cor chapada (vértice) + solo na cor média da textura, facetado */
+function lowpolyGround(tex: TextureLibrary, m: THREE.MeshStandardMaterial) {
+  m.flatShading = true;
+  const soil = tex.get('soil');
+  const soilC = soil ? new THREE.Color(soil.avg.r, soil.avg.g, soil.avg.b).multiplyScalar(1.35) : new THREE.Color('#9a5a3a');
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uSoilC = { value: soilC };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 blend;\nvarying vec2 vBlend;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvBlend = blend;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uSoilC;\nvarying vec2 vBlend;')
+      .replace(
+        '#include <color_fragment>',
+        '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, uSoilC, clamp(vBlend.x, 0.0, 1.0));',
+      );
+  };
+  m.customProgramCacheKey = () => 'ground-lowpoly';
   return m;
 }
 
