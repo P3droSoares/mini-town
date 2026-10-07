@@ -78,8 +78,8 @@ export function buildTerrainMesh(hf: HeightField, data: CityData, tex: TextureLi
   const low = new THREE.Color(PALETTE.terrainLow);
   const high = new THREE.Color(PALETTE.terrainHigh);
   const tint = new THREE.Color();
-  const soilTint = new THREE.Color('#d9a77c');
-  const urbanTint = new THREE.Color('#c9d99a');
+  const soilTint = new THREE.Color('#8a5a3c');
+  const urbanTint = new THREE.Color('#7d8a55');
   const maxX = minX + (nx - 1) * cell;
   const maxZ = minZ + (nx - 1) * cell;
 

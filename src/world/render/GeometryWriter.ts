@@ -8,7 +8,7 @@ import * as THREE from 'three';
  *  - facade  vec4 (u ao longo da parede, v altura acima do solo, altura total, seed)
  *            seed = 0 => sem janelas (telhados, chão...)
  *  - style   vec4 (cor de acabamento rgb, código de estilo) — constante por prédio
- *  - aux     vec4 (comprimento da parede, margem, nº de vãos, livre) — layout das janelas
+ *  - aux     vec4 (comprimento da parede, margem, nº de vãos, camada+1 do atlas; 0 = sem textura)
  */
 export class GeometryWriter {
   pos: number[] = [];
@@ -18,10 +18,14 @@ export class GeometryWriter {
   fac: number[] = [];
   sty: number[] = [];
   aux: number[] = [];
+  /** índices (quads compartilham 2 vértices: 4 em vez de 6) */
+  idx: number[] = [];
   /** estilo corrente aplicado aos próximos vértices */
   style: [number, number, number, number] = [0, 0, 0, 0];
   /** layout de janelas da parede corrente */
   wall: [number, number, number, number] = [0, 0, 0, 0];
+  /** camada do atlas de materiais (-1 = cor sólida) */
+  layer = -1;
 
   private static a = new THREE.Vector3();
   private static b = new THREE.Vector3();
@@ -53,13 +57,15 @@ export class GeometryWriter {
       i1 = 2;
       i2 = 1;
     }
+    const base = this.vertexCount;
+    this.idx.push(base, base + 1, base + 2);
     this.pos.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
     const s = this.style;
     for (let i = 0; i < 3; i++) {
       this.nor.push(n.x, n.y, n.z);
       this.col.push(color.r, color.g, color.b);
       this.sty.push(s[0], s[1], s[2], s[3]);
-      this.aux.push(this.wall[0], this.wall[1], this.wall[2], this.wall[3]);
+      this.aux.push(this.wall[0], this.wall[1], this.wall[2], this.layer + 1);
     }
     if (uv) this.uv.push(uv[0], uv[1], uv[i1 * 2], uv[i1 * 2 + 1], uv[i2 * 2], uv[i2 * 2 + 1]);
     else this.uv.push(p0.x, p0.z, p1.x, p1.z, p2.x, p2.z);
@@ -81,9 +87,38 @@ export class GeometryWriter {
     uv?: number[],
     fac?: number[],
   ) {
-    const pick = (arr: number[] | undefined, idx: number[], k: number) => (arr ? idx.flatMap((i) => arr.slice(i * k, i * k + k)) : undefined);
-    this.tri(p0, p1, p2, color, facing, pick(uv, [0, 1, 2], 2), pick(fac, [0, 1, 2], 4));
-    this.tri(p0, p2, p3, color, facing, pick(uv, [0, 2, 3], 2), pick(fac, [0, 2, 3], 4));
+    const { a, b, n } = GeometryWriter;
+    // normal do quad = média das duas metades (quads levemente não planares)
+    a.subVectors(p2, p0);
+    b.subVectors(p3, p1);
+    n.crossVectors(a, b);
+    const len = n.length();
+    if (len < 1e-8) {
+      const pick = (arr: number[] | undefined, ids: number[], k: number) => (arr ? ids.flatMap((i) => arr.slice(i * k, i * k + k)) : undefined);
+      this.tri(p0, p1, p2, color, facing, pick(uv, [0, 1, 2], 2), pick(fac, [0, 1, 2], 4));
+      this.tri(p0, p2, p3, color, facing, pick(uv, [0, 2, 3], 2), pick(fac, [0, 2, 3], 4));
+      return;
+    }
+    n.divideScalar(len);
+    const flip = !!facing && n.dot(facing) < 0;
+    if (flip) n.negate();
+    const base = this.vertexCount;
+    const ps = [p0, p1, p2, p3];
+    const s = this.style;
+    for (let i = 0; i < 4; i++) {
+      const p = ps[i];
+      this.pos.push(p.x, p.y, p.z);
+      this.nor.push(n.x, n.y, n.z);
+      this.col.push(color.r, color.g, color.b);
+      this.sty.push(s[0], s[1], s[2], s[3]);
+      this.aux.push(this.wall[0], this.wall[1], this.wall[2], this.layer + 1);
+      if (uv) this.uv.push(uv[i * 2], uv[i * 2 + 1]);
+      else this.uv.push(p.x, p.z);
+      if (fac) this.fac.push(fac[i * 4], fac[i * 4 + 1], fac[i * 4 + 2], fac[i * 4 + 3]);
+      else this.fac.push(0, 0, 0, 0);
+    }
+    if (flip) this.idx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+    else this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
   /** caixa orientada pelo eixo u (no plano xz), com UV de parede nas laterais */
@@ -124,6 +159,7 @@ export class GeometryWriter {
     g.setAttribute('facade', new THREE.Float32BufferAttribute(this.fac, 4));
     g.setAttribute('style', new THREE.Float32BufferAttribute(this.sty, 4));
     g.setAttribute('aux', new THREE.Float32BufferAttribute(this.aux, 4));
+    g.setIndex(this.idx);
     return g;
   }
 }

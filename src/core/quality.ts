@@ -46,10 +46,10 @@ export const PRESETS: Record<QualityLevel, QualityPreset> = {
     normalMaps: true,
     anisotropy: 4,
     ssao: false,
-    bloom: true,
+    bloom: false,
     trees: 0.7,
     leafCards: 8,
-    lodDistance: 520,
+    lodDistance: 380,
     npcScale: 0.75,
   },
   high: {
@@ -68,9 +68,25 @@ export const PRESETS: Record<QualityLevel, QualityPreset> = {
   },
 };
 
-/** escolha automática: celular = low/medium, desktop = high */
+/** nome da GPU (WEBGL_debug_renderer_info), se disponível */
+export function gpuName(): string {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2') as WebGL2RenderingContext | null;
+    if (!gl) return '';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return name;
+  } catch {
+    return '';
+  }
+}
+
+/** escolha automática: GPU dedicada = alta; integrada = média; celular = média/baixa */
 export function autoQuality(mobile: boolean): QualityLevel {
-  if (!mobile) return 'high';
+  const gpu = gpuName();
+  const integrated = /Intel|UHD|Iris|Vega|Radeon\(TM\) Graphics|Mali|Adreno|PowerVR|SwiftShader|llvmpipe/i.test(gpu);
+  if (!mobile) return integrated ? 'medium' : 'high';
   const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4;
   return mem >= 6 && (navigator.hardwareConcurrency ?? 4) >= 8 ? 'medium' : 'low';
 }

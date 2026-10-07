@@ -1,7 +1,229 @@
 {
   "license": "CC0 1.0 (Poly Haven)",
   "source": "https://polyhaven.com",
-  "textures": {},
+  "size": 512,
+  "textures": {
+    "asphalt": {
+      "id": "asphalt_02",
+      "name": "Asphalt 02",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 3,
+      "maps": {
+        "diff": "textures/asphalt_02/diff.jpg",
+        "nor": "textures/asphalt_02/nor.jpg",
+        "arm": "textures/asphalt_02/arm.jpg"
+      }
+    },
+    "pavement": {
+      "id": "concrete_pavement",
+      "name": "Concrete Pavement",
+      "authors": [
+        "Charlotte Baglioni"
+      ],
+      "size": 1.8,
+      "maps": {
+        "diff": "textures/concrete_pavement/diff.jpg",
+        "nor": "textures/concrete_pavement/nor.jpg",
+        "arm": "textures/concrete_pavement/arm.jpg"
+      }
+    },
+    "grass": {
+      "id": "aerial_grass_rock",
+      "name": "Aerial Grass Rock",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 15,
+      "maps": {
+        "diff": "textures/aerial_grass_rock/diff.jpg",
+        "nor": "textures/aerial_grass_rock/nor.jpg"
+      }
+    },
+    "soil": {
+      "id": "red_laterite_soil_stones",
+      "name": "Red Laterite Soil Stones",
+      "authors": [
+        "Amal Kumar"
+      ],
+      "size": 2,
+      "maps": {
+        "diff": "textures/red_laterite_soil_stones/diff.jpg",
+        "nor": "textures/red_laterite_soil_stones/nor.jpg"
+      }
+    },
+    "bark": {
+      "id": "bark_brown_02",
+      "name": "Bark Brown 02",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 1,
+      "maps": {
+        "diff": "textures/bark_brown_02/diff.jpg",
+        "nor": "textures/bark_brown_02/nor.jpg"
+      }
+    }
+  },
+  "layers": [
+    {
+      "key": "plaster",
+      "id": "white_plaster_02",
+      "name": "White Plaster 02",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 1,
+      "diff": "layers/white_plaster_02/diff.jpg",
+      "nor": "layers/white_plaster_02/nor.jpg"
+    },
+    {
+      "key": "brickRed",
+      "id": "red_brick_03",
+      "name": "Red Brick 03",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 1,
+      "diff": "layers/red_brick_03/diff.jpg",
+      "nor": "layers/red_brick_03/nor.jpg"
+    },
+    {
+      "key": "brickYellow",
+      "id": "yellow_bricks",
+      "name": "Yellow Bricks",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 2,
+      "diff": "layers/yellow_bricks/diff.jpg",
+      "nor": "layers/yellow_bricks/nor.jpg"
+    },
+    {
+      "key": "concrete",
+      "id": "concrete_wall_008",
+      "name": "Concrete Wall 008",
+      "authors": [
+        "Dario Barresi",
+        "Charlotte Baglioni"
+      ],
+      "size": 2.71,
+      "diff": "layers/concrete_wall_008/diff.jpg",
+      "nor": "layers/concrete_wall_008/nor.jpg"
+    },
+    {
+      "key": "panels",
+      "id": "concrete_panels",
+      "name": "Concrete Panels",
+      "authors": [
+        "Amal Kumar"
+      ],
+      "size": 8,
+      "diff": "layers/concrete_panels/diff.jpg",
+      "nor": "layers/concrete_panels/nor.jpg"
+    },
+    {
+      "key": "tiles",
+      "id": "rectangular_facade_tiles",
+      "name": "Rectangular Facade Tiles",
+      "authors": [
+        "Charlotte Baglioni"
+      ],
+      "size": 2,
+      "diff": "layers/rectangular_facade_tiles/diff.jpg",
+      "nor": "layers/rectangular_facade_tiles/nor.jpg"
+    },
+    {
+      "key": "metal",
+      "id": "corrugated_iron",
+      "name": "Corrugated Iron",
+      "authors": [
+        "Jenelle van Heerden",
+        "Dimitrios Savva"
+      ],
+      "size": 1.12,
+      "diff": "layers/corrugated_iron/diff.jpg",
+      "nor": "layers/corrugated_iron/nor.jpg"
+    },
+    {
+      "key": "wood",
+      "id": "wood_planks_grey",
+      "name": "Wood Planks Grey",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 1.5,
+      "diff": "layers/wood_planks_grey/diff.jpg",
+      "nor": "layers/wood_planks_grey/nor.jpg"
+    },
+    {
+      "key": "roofClay",
+      "id": "clay_roof_tiles",
+      "name": "Clay Roof Tiles",
+      "authors": [
+        "Amal Kumar"
+      ],
+      "size": 4,
+      "diff": "layers/clay_roof_tiles/diff.jpg",
+      "nor": "layers/clay_roof_tiles/nor.jpg"
+    },
+    {
+      "key": "roofGrey",
+      "id": "grey_roof_tiles",
+      "name": "Grey Roof Tiles",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 3,
+      "diff": "layers/grey_roof_tiles/diff.jpg",
+      "nor": "layers/grey_roof_tiles/nor.jpg"
+    },
+    {
+      "key": "roofSlate",
+      "id": "roof_slates_02",
+      "name": "Roof Slates 02",
+      "authors": [
+        "Rob Tuytel"
+      ],
+      "size": 3,
+      "diff": "layers/roof_slates_02/diff.jpg",
+      "nor": "layers/roof_slates_02/nor.jpg"
+    },
+    {
+      "key": "roofConcrete",
+      "id": "rough_concrete",
+      "name": "Rough Concrete",
+      "authors": [
+        "Dimitrios Savva"
+      ],
+      "size": 1.23,
+      "diff": "layers/rough_concrete/diff.jpg",
+      "nor": "layers/rough_concrete/nor.jpg"
+    },
+    {
+      "key": "roofMetal",
+      "id": "box_profile_metal_sheet",
+      "name": "Box Profile Metal Sheet",
+      "authors": [
+        "Amal Kumar"
+      ],
+      "size": 2,
+      "diff": "layers/box_profile_metal_sheet/diff.jpg",
+      "nor": "layers/box_profile_metal_sheet/nor.jpg"
+    },
+    {
+      "key": "patio",
+      "id": "patio_tiles",
+      "name": "Patio Tiles",
+      "authors": [
+        "Dario Barresi"
+      ],
+      "size": 2.15,
+      "diff": "layers/patio_tiles/diff.jpg",
+      "nor": "layers/patio_tiles/nor.jpg"
+    }
+  ],
   "hdri": {
     "sky": {
       "id": "kloofendal_48d_partly_cloudy_puresky",

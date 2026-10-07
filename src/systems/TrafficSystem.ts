@@ -72,6 +72,7 @@ export class TrafficSystem implements System {
   private readonly maxPeds: number;
   private occupancy = new Map<number, Agent[]>();
   readonly stats = { cars: 0 };
+  private boundsAcc = 1;
 
   constructor(
     private readonly game: Game,
@@ -109,7 +110,6 @@ export class TrafficSystem implements System {
         im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         im.castShadow = shadow;
         im.receiveShadow = shadow;
-        im.frustumCulled = false;
         for (let i = 0; i < n; i++) im.setMatrixAt(i, HIDDEN);
         game.scene.add(im);
         return im;
@@ -125,7 +125,6 @@ export class TrafficSystem implements System {
     this.pedMesh = new THREE.InstancedMesh(pedestrianGeometry(), createPedestrianMaterial(), this.maxPeds);
     this.pedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.pedMesh.castShadow = true;
-    this.pedMesh.frustumCulled = false;
     const pick = (arr: string[]) => new THREE.Color(arr[Math.floor(this.rng() * arr.length)]);
     const skin = new Float32Array(this.maxPeds * 3);
     const shirt = new Float32Array(this.maxPeds * 3);
@@ -347,6 +346,14 @@ export class TrafficSystem implements System {
     this.pedMesh.count = np;
     this.pedMesh.instanceMatrix.needsUpdate = true;
     for (const at of this.pedAttrs) at.needsUpdate = true;
+    // culling por frustum com esfera envolvente atualizada 2x/s (instâncias se movem)
+    this.boundsAcc += dt;
+    if (this.boundsAcc > 0.5) {
+      this.boundsAcc = 0;
+      for (const mm of this.models) for (const im of [...mm.meshes, mm.glow]) im.computeBoundingSphere();
+      this.pedMesh.computeBoundingSphere();
+      for (const im of [...this.models.flatMap((m) => [...m.meshes, m.glow]), this.pedMesh]) if (im.boundingSphere) im.boundingSphere.radius += 30;
+    }
     this.stats.cars = activeCars;
   }
 }

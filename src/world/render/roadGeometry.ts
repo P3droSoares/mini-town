@@ -190,14 +190,14 @@ function runsOutside(pts: Vec2[], js: Junction[], keep: (p: Vec2) => boolean): V
 }
 
 // cores absolutas (texturas normalizadas: só dão o detalhe)
-const C_ASPHALT = new THREE.Color('#7a8189');
-const C_SERVICE = new THREE.Color('#8d939a');
-const C_WHITE = new THREE.Color('#ffffff');
-const C_YELLOW = new THREE.Color('#ffd25a');
-const C_WALK = new THREE.Color('#ece6da');
-const C_CURB = new THREE.Color('#fbf9f4');
-const C_FOOT = new THREE.Color('#ead9b5');
-const C_TRACK = new THREE.Color('#d9a77c');
+const C_ASPHALT = new THREE.Color('#55595e');
+const C_SERVICE = new THREE.Color('#6a6d70');
+const C_WHITE = new THREE.Color('#eeebe2');
+const C_YELLOW = new THREE.Color('#e3b83c');
+const C_WALK = new THREE.Color('#bdb7ab');
+const C_CURB = new THREE.Color('#d6d2c9');
+const C_FOOT = new THREE.Color('#cbb894');
+const C_TRACK = new THREE.Color('#a8714f');
 
 /** Escreve a via inteira: pista, marcações, calçadas com meio-fio, faixas de pedestre. */
 export function writeStreet(asphalt: GeometryWriter, walk: GeometryWriter, s: Street, hf: HeightField, world: WorldState) {
@@ -206,7 +206,7 @@ export function writeStreet(asphalt: GeometryWriter, walk: GeometryWriter, s: St
     writeRibbon(walk, pts, s.width, s.kind === 'track' ? C_TRACK : s.kind === 'pedestrian' ? C_WALK : C_FOOT, streetHeight(s, pts, hf, 0.12));
     return;
   }
-  const pts = densify(s.points, 3);
+  const pts = densify(s.points, 4.5);
   const half = s.width / 2;
   const road = streetHeight(s, pts, hf, ROAD_LIFT);
   writeRibbon(asphalt, pts, s.width, s.kind === 'service' ? C_SERVICE : C_ASPHALT, road);
@@ -311,6 +311,6 @@ export function writeStreet(asphalt: GeometryWriter, walk: GeometryWriter, s: St
 export function writeWaterLine(water: GeometryWriter, bank: GeometryWriter, wl: WaterLine, hf: HeightField) {
   const pts = densify(wl.points, 5);
   const width = Math.max(1.2, wl.width);
-  writeRibbon(bank, pts, width + 5, new THREE.Color('#e8dcb5'), (x, z) => hf.sample(x, z) + 0.04);
+  writeRibbon(bank, pts, width + 5, new THREE.Color('#7d7656'), (x, z) => hf.sample(x, z) + 0.04);
   writeRibbon(water, pts, width, new THREE.Color(1, 1, 1), (x, z) => hf.sample(x, z) + 0.14, { offset: 0 });
 }

@@ -3,66 +3,116 @@ import type { Building, BuildingCategory, Ring, Vec2 } from '../../data/types';
 import type { HeightField } from '../HeightField';
 import { hashId, mulberry32, polygonArea } from '../geo';
 import { GeometryWriter, UP } from './GeometryWriter';
+import type { SignAtlas } from './signAtlas';
+import { Layer } from './textures';
 
 /**
- * Kit de prédios estilo "diorama": formas limpas com cantos chanfrados,
- * cores pastel e peças geométricas (toldos listrados, sacadas, floreiras,
- * jardins na cobertura, faixas de laje, chaminés, dentes de serra).
- * As janelas são desenhadas no shader com o MESMO layout usado aqui para
- * posicionar as peças — assim toldo e sacada caem exatamente nos vãos.
+ * Kit de prédios realistas por ARQUÉTIPO. Cada categoria (residencial,
+ * comercial, industrial...) tem vários tipos, e cada tipo varia material
+ * (atlas PBR), cor, telhado, número de vãos e peças (toldos, sacadas,
+ * letreiros, outdoors, platibandas, casas de máquinas, chaminés...).
+ *
+ * As janelas são desenhadas no shader com o MESMO layout de vãos usado aqui
+ * para posicionar as peças. Tudo determinístico pela seed do lote.
  */
 
 export type Detail = 'high' | 'low';
 
-/** paredes (shader de fachada) e detalhes (cor sólida) */
+/** paredes (com fachada), peças e letreiros */
 export interface BuildingWriters {
   walls: GeometryWriter;
   detail: GeometryWriter;
+  signs: GeometryWriter;
 }
-export const WRITER_KEYS = ['walls', 'detail'] as const;
+export const WRITER_KEYS = ['walls', 'detail', 'signs'] as const;
 export type WriterKey = (typeof WRITER_KEYS)[number];
 
 export function createWriters(): BuildingWriters {
-  return { walls: new GeometryWriter(), detail: new GeometryWriter() };
+  return { walls: new GeometryWriter(), detail: new GeometryWriter(), signs: new GeometryWriter() };
 }
 
 /** Teste "esta parede dá para a rua?" (ponto médio + normal externa) */
 export type FrontTest = (mx: number, mz: number, ox: number, oz: number) => boolean;
 
 /** estilos de fachada (iguais no shader) */
-export const FacadeStyle = { house: 0, commercial: 1, apartment: 2, industrial: 3, plain: 4, institutional: 5 } as const;
+export const FacadeStyle = {
+  house: 0,
+  commercial: 1,
+  apartment: 2,
+  industrial: 3,
+  plain: 4,
+  institutional: 5,
+  office: 6,
+  modern: 7,
+  brick: 8,
+  slab: 9,
+} as const;
 /** largura do vão por estilo (iguais no shader) */
-export const BAY: Record<number, number> = { 0: 2.6, 1: 2.6, 2: 3.0, 3: 4.0, 4: 3.0, 5: 3.2 };
+export const BAY: Record<number, number> = { 0: 2.6, 1: 2.6, 2: 3.0, 3: 4.0, 4: 3.0, 5: 3.2, 6: 1.6, 7: 4.0, 8: 2.4, 9: 3.0 };
 export const FLOOR_H = 3.0;
+
+/** arquétipos (exibidos no painel) */
+export type Archetype =
+  | 'colonial'
+  | 'casa-moderna'
+  | 'sobrado-tijolo'
+  | 'casa-simples'
+  | 'predio-baixo'
+  | 'bloco-bnh'
+  | 'torre-tijolo'
+  | 'torre-moderna'
+  | 'loja-tijolo'
+  | 'loja-reboco'
+  | 'supermercado'
+  | 'escritorios'
+  | 'galpao-metalico'
+  | 'fabrica-tijolo'
+  | 'institucional'
+  | 'igreja';
+
+export const ARCHETYPE_LABEL: Record<Archetype, string> = {
+  colonial: 'Casa colonial mineira',
+  'casa-moderna': 'Casa moderna',
+  'sobrado-tijolo': 'Sobrado de tijolo',
+  'casa-simples': 'Casa térrea',
+  'predio-baixo': 'Prédio residencial baixo',
+  'bloco-bnh': 'Bloco de apartamentos',
+  'torre-tijolo': 'Edifício de tijolo',
+  'torre-moderna': 'Edifício moderno',
+  'loja-tijolo': 'Sobrado comercial de tijolo',
+  'loja-reboco': 'Loja de rua',
+  supermercado: 'Supermercado / loja grande',
+  escritorios: 'Edifício de escritórios',
+  'galpao-metalico': 'Galpão metálico',
+  'fabrica-tijolo': 'Fábrica de tijolo',
+  institucional: 'Prédio público',
+  igreja: 'Igreja',
+};
 
 // ------------------------------------------------------------------ paletas
 
 const C = (h: string) => new THREE.Color(h);
 const PAL = {
-  resWalls: ['#ffe8c9', '#ffd3c2', '#ffc9d6', '#cfe6f7', '#d3efcf', '#fff0b3', '#e6d9f7', '#fdf6ea', '#ffdcb0', '#c6ecec', '#f9c7c7', '#e2f2b8'].map(C),
-  resRoofs: ['#e8743b', '#f08a4b', '#d9653a', '#c95a3a', '#ef7d5a', '#e66a45', '#e98aa0', '#7f93a8'].map(C),
-  comWalls: ['#fdf6ea', '#ffe1c7', '#d6ecf3', '#fde2e4', '#e2f3dc', '#fff3c4', '#e9e1f7', '#f2f2f2'].map(C),
-  awnings: ['#e8743b', '#2bb3a3', '#e2534a', '#f2c14e', '#2f4a6d', '#8bc34a', '#d96a9a'].map(C),
-  aptWalls: ['#c9ced3', '#dfe3e6', '#f7c9d4', '#c6dff2', '#f4dcc0', '#d9e9d2', '#e8d6f2'].map(C),
-  aptBands: ['#8b939b', '#a7adb3', '#7d8790', '#b5aa98'].map(C),
-  indWalls: ['#c9d3dc', '#d8d2c4', '#b8c4cc', '#d6dde3', '#cfd8cf'].map(C),
-  indRoofs: ['#8c99a6', '#9aa5ad', '#7d8b96'].map(C),
-  instWalls: ['#f4efe6', '#eef2f6', '#f6eadf'].map(C),
-  trims: ['#2f5d8a', '#2e6b4f', '#c9961e', '#8e2f2a', '#3c4f6b', '#e8743b', '#1f4a5e', '#6b4a8e'].map(C),
-  white: C('#fbfaf6'),
-  roofFlat: C('#c9cdd1'),
-  parapet: C('#eceae4'),
-  garden: C('#7cc26b'),
-  bushes: ['#5fb35a', '#8fd16f', '#4fa45a', '#a3d977'].map(C),
-  flowers: ['#ff8fa3', '#ffd166', '#f07167', '#c77dff', '#ffffff'].map(C),
-  planter: C('#c9744e'),
-  glassRail: C('#bfe0ee'),
-  dark: C('#3a3f45'),
-  metal: C('#9aa3ab'),
-  tank: C('#4f86b0'),
+  colonial: ['#f4efe4', '#f2e2b8', '#e9d8a6', '#dfe8ec', '#cfe0e8', '#f1d9cf', '#f6f1ea', '#efd9a6', '#e2c9a6', '#dfe6d3'].map(C),
+  modern: ['#f5f5f2', '#e6e6e3', '#d5d6d6', '#efe9df', '#c9cbcc', '#3d4045'].map(C),
+  plasterShop: ['#f1ece2', '#e4e1da', '#f0e3c4', '#d8e2e6', '#e9d5c5', '#dde7d8', '#f5d7c4'].map(C),
+  slab: ['#efebe3', '#e6e2d8', '#ddd9cf', '#f2efe8', '#e9e2d0'].map(C),
+  towerGrey: ['#c9ccd0', '#b7bcc2', '#d6d3cc', '#a9afb5', '#e1ddd5'].map(C),
+  institutional: ['#f4efe6', '#eef2f6', '#f6eadf', '#e8e4dc'].map(C),
+  industrial: ['#d9dde1', '#c4ccd3', '#e1e4e6', '#b8c2ca', '#d6d0c4', '#9fb0bd'].map(C),
+  trims: ['#2f5d8a', '#2e6b4f', '#c9961e', '#6b3f24', '#8e2f2a', '#3c4f6b', '#f4f1ea', '#1f4a5e'].map(C),
+  awnings: ['#c62828', '#1565c0', '#2e7d32', '#ef6c00', '#263238', '#6a1b9a', '#00838f'].map(C),
+  natural: ['#ffffff', '#f2eee8', '#e8e4de', '#fff8ef', '#e9edf0'].map(C),
+  white: C('#f4f2ec'),
+  glassRail: C('#a7c4d4'),
+  dark: C('#33373c'),
+  metal: C('#8f979e'),
+  steel: C('#b9c0c6'),
+  tank: C('#3f78a8'),
   church: C('#fbfaf5'),
   churchTrim: C('#3f6d8f'),
-  chimneyRed: C('#d9573f'),
+  chimneyRed: C('#b5432f'),
+  hedge: C('#4f7a3a'),
 };
 const pick = <T>(arr: T[], r: number) => arr[Math.min(arr.length - 1, Math.floor(r * arr.length))];
 
@@ -71,7 +121,6 @@ const pick = <T>(arr: T[], r: number) => arr[Math.min(arr.length - 1, Math.floor
 interface OrientedRect {
   cx: number;
   cz: number;
-  /** eixo do lado longo */
   ux: number;
   uz: number;
   hl: number;
@@ -165,21 +214,6 @@ export function categoryOf(b: Building): BuildingCategory {
   return 'residential';
 }
 
-/** "caixa" orientada por (ux,uz) */
-interface Box {
-  cx: number;
-  cz: number;
-  ux: number;
-  uz: number;
-  hu: number;
-  hv: number;
-}
-const vx = (b: Box) => -b.uz;
-const vz = (b: Box) => b.ux;
-/** ponto local (su ao longo de u, sv ao longo de v) */
-const at = (b: Box, su: number, sv: number, y: number) => V(b.cx + b.ux * su + vx(b) * sv, y, b.cz + b.uz * su + vz(b) * sv);
-
-/** Writer + contexto do prédio corrente */
 interface Ctx {
   w: BuildingWriters;
   rng: () => number;
@@ -188,93 +222,17 @@ interface Ctx {
   seed: number;
   trim: THREE.Color;
   style: number;
-  detail: Detail;
 }
 
-/**
- * Paredes de um anel (polígono CCW) com fachada. `frontEdge` marca a
- * parede da frente (vitrines, porta). Retorna o layout de cada parede.
- */
 interface WallLayout {
   a: Vec2;
   b: Vec2;
   len: number;
   bays: number;
   margin: number;
-  /** normal externa */
   ox: number;
   oz: number;
   front: boolean;
-}
-
-function writeWalls(ctx: Ctx, ring: Vec2[], y0: number, y1: number, color: THREE.Color, front: (i: number, l: WallLayout) => boolean, windows = true): WallLayout[] {
-  const out: WallLayout[] = [];
-  const w = ctx.w.walls;
-  const bay = BAY[ctx.style];
-  for (let i = 0; i < ring.length; i++) {
-    const a = ring[i];
-    const b = ring[(i + 1) % ring.length];
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (len < 0.05) continue;
-    const ox = (b[1] - a[1]) / len;
-    const oz = -(b[0] - a[0]) / len;
-    const bays = windows && len >= bay * 0.85 ? Math.max(1, Math.floor(len / bay)) : 0;
-    const margin = (len - bays * bay) / 2;
-    const l: WallLayout = { a, b, len, bays, margin, ox, oz, front: false };
-    l.front = front(i, l);
-    w.style = [ctx.trim.r, ctx.trim.g, ctx.trim.b, ctx.style * 2 + (l.front ? 1 : 0)];
-    w.wall = [len, margin, bays, 0];
-    const s = bays > 0 ? ctx.seed : 0;
-    const vb = y0 - ctx.gMax;
-    const top = ctx.topV;
-    w.quad(
-      V(a[0], y0, a[1]),
-      V(b[0], y0, b[1]),
-      V(b[0], y1, b[1]),
-      V(a[0], y1, a[1]),
-      color,
-      V(ox, 0, oz),
-      [0, y0, len, y0, len, y1, 0, y1],
-      [0, vb, top, s, len, vb, top, s, len, y1 - ctx.gMax, top, s, 0, y1 - ctx.gMax, top, s],
-    );
-    out.push(l);
-  }
-  w.wall = [0, 0, 0, 0];
-  return out;
-}
-
-/** octógono = retângulo com cantos chanfrados (CCW) */
-function chamferRing(b: Box, c: number): Vec2[] {
-  const pts: [number, number][] = [
-    [-b.hu + c, -b.hv],
-    [b.hu - c, -b.hv],
-    [b.hu, -b.hv + c],
-    [b.hu, b.hv - c],
-    [b.hu - c, b.hv],
-    [-b.hu + c, b.hv],
-    [-b.hu, b.hv - c],
-    [-b.hu, -b.hv + c],
-  ];
-  const ring = pts.map(([su, sv]) => {
-    const p = at(b, su, sv, 0);
-    return [p.x, p.z] as Vec2;
-  });
-  return orientCCW(ring);
-}
-
-function rectRing(b: Box): Vec2[] {
-  const ring = (
-    [
-      [-b.hu, -b.hv],
-      [b.hu, -b.hv],
-      [b.hu, b.hv],
-      [-b.hu, b.hv],
-    ] as [number, number][]
-  ).map(([su, sv]) => {
-    const p = at(b, su, sv, 0);
-    return [p.x, p.z] as Vec2;
-  });
-  return orientCCW(ring);
 }
 
 function orientCCW(ring: Vec2[]): Vec2[] {
@@ -287,8 +245,70 @@ function orientCCW(ring: Vec2[]): Vec2[] {
   return a > 0 ? ring : ring.slice().reverse();
 }
 
-/** tampa plana de um anel */
-function cap(w: GeometryWriter, ring: Vec2[], y: number, c: THREE.Color, holes?: Ring[]) {
+/** retângulo orientado (opcionalmente chanfrado) como anel CCW */
+function boxRing(r: OrientedRect, c = 0, hl = r.hl, hw = r.hw, offU = 0, offV = 0): Vec2[] {
+  const vx = -r.uz;
+  const vz = r.ux;
+  const pts: [number, number][] = c
+    ? [
+        [-hl + c, -hw],
+        [hl - c, -hw],
+        [hl, -hw + c],
+        [hl, hw - c],
+        [hl - c, hw],
+        [-hl + c, hw],
+        [-hl, hw - c],
+        [-hl, -hw + c],
+      ]
+    : [
+        [-hl, -hw],
+        [hl, -hw],
+        [hl, hw],
+        [-hl, hw],
+      ];
+  return orientCCW(pts.map(([su, sv]) => [r.cx + r.ux * (su + offU) + vx * (sv + offV), r.cz + r.uz * (su + offU) + vz * (sv + offV)] as Vec2));
+}
+
+/** paredes de um anel com fachada; `front(i, l)` decide a parede da frente */
+function writeWalls(ctx: Ctx, ring: Vec2[], y0: number, y1: number, color: THREE.Color, layer: number, front: (l: WallLayout) => boolean, windows = true): WallLayout[] {
+  const out: WallLayout[] = [];
+  const w = ctx.w.walls;
+  const bay = BAY[ctx.style];
+  w.layer = layer;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 0.05) continue;
+    const ox = (b[1] - a[1]) / len;
+    const oz = -(b[0] - a[0]) / len;
+    const bays = windows && len >= bay * 0.85 ? Math.max(1, Math.floor(len / bay)) : 0;
+    const margin = (len - bays * bay) / 2;
+    const l: WallLayout = { a, b, len, bays, margin, ox, oz, front: false };
+    l.front = front(l);
+    w.style = [ctx.trim.r, ctx.trim.g, ctx.trim.b, ctx.style * 2 + (l.front ? 1 : 0)];
+    w.wall = [len, margin, bays, 0];
+    const s = bays > 0 ? ctx.seed : 0;
+    const vb = y0 - ctx.gMax;
+    w.quad(
+      V(a[0], y0, a[1]),
+      V(b[0], y0, b[1]),
+      V(b[0], y1, b[1]),
+      V(a[0], y1, a[1]),
+      color,
+      V(ox, 0, oz),
+      [0, y0, len, y0, len, y1, 0, y1],
+      [0, vb, ctx.topV, s, len, vb, ctx.topV, s, len, y1 - ctx.gMax, ctx.topV, s, 0, y1 - ctx.gMax, ctx.topV, s],
+    );
+    out.push(l);
+  }
+  w.wall = [0, 0, 0, 0];
+  w.layer = -1;
+  return out;
+}
+
+function cap(w: GeometryWriter, ring: Vec2[], y: number, c: THREE.Color, layer: number, holes?: Ring[]) {
+  w.layer = layer;
   const contour = ring.map(([x, z]) => new THREE.Vector2(x, z));
   const hs = (holes ?? []).map((h) => h.map(([x, z]) => new THREE.Vector2(x, z)));
   const tris = THREE.ShapeUtils.triangulateShape(contour, hs);
@@ -299,17 +319,23 @@ function cap(w: GeometryWriter, ring: Vec2[], y: number, c: THREE.Color, holes?:
     const p2 = all[i2];
     w.tri(V(p0.x, y, p0.y), V(p1.x, y, p1.y), V(p2.x, y, p2.y), c, UP);
   }
+  w.layer = -1;
 }
 
-/** faixa (laje/cornija) saliente em volta de um anel */
-function band(w: GeometryWriter, ring: Vec2[], y0: number, y1: number, out: number, c: THREE.Color, top = true) {
+function norm2(x: number, z: number): [number, number] {
+  const l = Math.hypot(x, z) || 1;
+  return [x / l, z / l];
+}
+
+/** faixa saliente (laje/cornija) */
+function band(w: GeometryWriter, ring: Vec2[], y0: number, y1: number, out: number, c: THREE.Color, layer = -1) {
   const n = ring.length;
+  w.layer = layer;
   const off: Vec2[] = ring.map((p, i) => {
     const prev = ring[(i - 1 + n) % n];
     const next = ring[(i + 1) % n];
     const e1 = norm2(p[0] - prev[0], p[1] - prev[1]);
     const e2 = norm2(next[0] - p[0], next[1] - p[1]);
-    // normais externas (CCW): (dz, -dx)
     let nx = e1[1] + e2[1];
     let nz = -e1[0] - e2[0];
     const l = Math.hypot(nx, nz) || 1;
@@ -321,29 +347,23 @@ function band(w: GeometryWriter, ring: Vec2[], y0: number, y1: number, out: numb
   for (let i = 0; i < n; i++) {
     const a = off[i];
     const b = off[(i + 1) % n];
+    const ra = ring[i];
+    const rb = ring[(i + 1) % n];
     const o = V(b[1] - a[1], 0, -(b[0] - a[0]));
-    w.quad(V(a[0], y0, a[1]), V(b[0], y0, b[1]), V(b[0], y1, b[1]), V(a[0], y1, a[1]), c, o);
-    // face de baixo (aparece em vista de baixo)
-    w.quad(V(ring[i][0], y0, ring[i][1]), V(ring[(i + 1) % n][0], y0, ring[(i + 1) % n][1]), V(b[0], y0, b[1]), V(a[0], y0, a[1]), c, V(0, -1, 0));
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    w.quad(V(a[0], y0, a[1]), V(b[0], y0, b[1]), V(b[0], y1, b[1]), V(a[0], y1, a[1]), c, o, [0, y0, len, y0, len, y1, 0, y1]);
+    w.quad(V(ra[0], y0, ra[1]), V(rb[0], y0, rb[1]), V(b[0], y0, b[1]), V(a[0], y0, a[1]), c, V(0, -1, 0));
+    w.quad(V(ra[0], y1, ra[1]), V(rb[0], y1, rb[1]), V(b[0], y1, b[1]), V(a[0], y1, a[1]), c, UP);
   }
-  if (top) {
-    for (let i = 0; i < n; i++) {
-      const a = off[i];
-      const b = off[(i + 1) % n];
-      w.quad(V(ring[i][0], y1, ring[i][1]), V(ring[(i + 1) % n][0], y1, ring[(i + 1) % n][1]), V(b[0], y1, b[1]), V(a[0], y1, a[1]), c, UP);
-    }
-  }
+  w.layer = -1;
 }
 
-function norm2(x: number, z: number): [number, number] {
-  const l = Math.hypot(x, z) || 1;
-  return [x / l, z / l];
-}
-
-/** parapeito: paredes finas em volta da laje (face externa + interna + topo) */
-function parapet(w: GeometryWriter, ring: Vec2[], y: number, h: number, c: THREE.Color, inner: THREE.Color) {
+/** platibanda (parapeito) em volta da laje */
+function parapet(w: GeometryWriter, ring: Vec2[], y: number, h: number, c: THREE.Color, layer: number) {
   const n = ring.length;
-  const t = 0.18;
+  const t = 0.2;
+  w.layer = layer;
+  let u = 0;
   for (let i = 0; i < n; i++) {
     const a = ring[i];
     const b = ring[(i + 1) % n];
@@ -351,31 +371,17 @@ function parapet(w: GeometryWriter, ring: Vec2[], y: number, h: number, c: THREE
     if (len < 0.05) continue;
     const ox = (b[1] - a[1]) / len;
     const oz = -(b[0] - a[0]) / len;
-    w.quad(V(a[0], y, a[1]), V(b[0], y, b[1]), V(b[0], y + h, b[1]), V(a[0], y + h, a[1]), c, V(ox, 0, oz));
+    const uv = [u, y, u + len, y, u + len, y + h, u, y + h];
+    w.quad(V(a[0], y, a[1]), V(b[0], y, b[1]), V(b[0], y + h, b[1]), V(a[0], y + h, a[1]), c, V(ox, 0, oz), uv);
     const ai = [a[0] - ox * t, a[1] - oz * t];
     const bi = [b[0] - ox * t, b[1] - oz * t];
-    w.quad(V(ai[0], y, ai[1]), V(bi[0], y, bi[1]), V(bi[0], y + h, bi[1]), V(ai[0], y + h, ai[1]), inner, V(-ox, 0, -oz));
-    w.quad(V(a[0], y + h, a[1]), V(b[0], y + h, b[1]), V(bi[0], y + h, bi[1]), V(ai[0], y + h, ai[1]), c, UP);
+    w.quad(V(ai[0], y, ai[1]), V(bi[0], y, bi[1]), V(bi[0], y + h, bi[1]), V(ai[0], y + h, ai[1]), c, V(-ox, 0, -oz), uv);
+    w.quad(V(a[0], y + h, a[1]), V(b[0], y + h, b[1]), V(bi[0], y + h, bi[1]), V(ai[0], y + h, ai[1]), PAL.white, UP);
+    u += len;
   }
+  w.layer = -1;
 }
 
-/** caixa simples orientada (cor sólida) */
-function boxAt(w: GeometryWriter, cx: number, cz: number, y0: number, y1: number, ux: number, uz: number, hu: number, hv: number, c: THREE.Color, top = true) {
-  w.box(cx, cz, y0, y1, ux, uz, hu, hv, c, top);
-}
-
-/** arbusto redondo (icosaedro) */
-const ICO = new THREE.IcosahedronGeometry(1, 0);
-const ICO_POS = ICO.attributes.position;
-function bush(w: GeometryWriter, x: number, y: number, z: number, r: number, c: THREE.Color) {
-  for (let i = 0; i < ICO_POS.count; i += 3) {
-    const p = [0, 1, 2].map((k) => V(x + ICO_POS.getX(i + k) * r, y + ICO_POS.getY(i + k) * r * 0.85, z + ICO_POS.getZ(i + k) * r));
-    const cen = p[0].clone().add(p[1]).add(p[2]).divideScalar(3).sub(V(x, y, z));
-    w.tri(p[0], p[1], p[2], c, cen);
-  }
-}
-
-/** cilindro vertical (tanques, chaminés, colunas) */
 function cylinder(w: GeometryWriter, x: number, z: number, y0: number, y1: number, r: number, c: THREE.Color, seg = 10, topC?: THREE.Color) {
   for (let i = 0; i < seg; i++) {
     const a0 = (i / seg) * Math.PI * 2;
@@ -388,94 +394,22 @@ function cylinder(w: GeometryWriter, x: number, z: number, y0: number, y1: numbe
   }
 }
 
-// ------------------------------------------------------------ peças de fachada
-
-/** posição (ponto na parede, direção ao longo, normal) do centro do vão k */
-function bayFrame(l: WallLayout, k: number, bay: number) {
-  const dx = (l.b[0] - l.a[0]) / l.len;
-  const dz = (l.b[1] - l.a[1]) / l.len;
-  const s = l.margin + (k + 0.5) * bay;
-  return { x: l.a[0] + dx * s, z: l.a[1] + dz * s, dx, dz };
-}
-
-/** toldo listrado sobre o vão (comércio) */
-function awning(ctx: Ctx, l: WallLayout, k: number, y: number, c1: THREE.Color, c2: THREE.Color) {
-  const w = ctx.w.detail;
-  const bay = BAY[ctx.style];
-  const f = bayFrame(l, k, bay);
-  const half = bay / 2 - 0.12;
-  const depth = 1.15;
-  const drop = 0.55;
-  const strips = 6;
-  for (let i = 0; i < strips; i++) {
-    const s0 = -half + (i / strips) * half * 2;
-    const s1 = -half + ((i + 1) / strips) * half * 2;
-    const c = i % 2 ? c2 : c1;
-    const P = (s: number, out: number, yy: number) => V(f.x + f.dx * s + l.ox * out, yy, f.z + f.dz * s + l.oz * out);
-    // pano inclinado
-    w.quad(P(s0, 0.05, y), P(s1, 0.05, y), P(s1, depth, y - drop), P(s0, depth, y - drop), c, V(l.ox, 1.5, l.oz));
-    // franja (valance)
-    w.quad(P(s0, depth, y - drop), P(s1, depth, y - drop), P(s1, depth, y - drop - 0.22), P(s0, depth, y - drop - 0.22), c, V(l.ox, 0, l.oz));
-  }
-  // laterais
-  for (const s of [-half, half]) {
-    const P = (out: number, yy: number) => V(f.x + f.dx * s + l.ox * out, yy, f.z + f.dz * s + l.oz * out);
-    w.tri(P(0.05, y), P(depth, y - drop), P(depth, y - drop - 0.22), c1, V(f.dx * Math.sign(s), 0, f.dz * Math.sign(s)));
-  }
-}
-
-/** sacada: laje + guarda-corpo */
-function balcony(ctx: Ctx, l: WallLayout, k: number, y: number, slab: THREE.Color, rail: THREE.Color) {
-  const w = ctx.w.detail;
-  const bay = BAY[ctx.style];
-  const f = bayFrame(l, k, bay);
-  const hu = bay * 0.42;
-  const d = 1.0;
-  const cx = f.x + l.ox * (d / 2);
-  const cz = f.z + l.oz * (d / 2);
-  boxAt(w, cx, cz, y - 0.16, y, f.dx, f.dz, hu, d / 2, slab);
-  // guarda-corpo frontal + laterais
-  boxAt(w, f.x + l.ox * (d - 0.03), f.z + l.oz * (d - 0.03), y, y + 0.95, f.dx, f.dz, hu, 0.03, rail);
-  for (const s of [-1, 1])
-    boxAt(w, f.x + f.dx * hu * s + l.ox * (d / 2), f.z + f.dz * hu * s + l.oz * (d / 2), y, y + 0.95, f.dx, f.dz, 0.03, d / 2, rail);
-}
-
-/** floreira sob a janela */
-function flowerBox(ctx: Ctx, l: WallLayout, k: number, y: number) {
-  const w = ctx.w.detail;
-  const f = bayFrame(l, k, BAY[ctx.style]);
-  const cx = f.x + l.ox * 0.16;
-  const cz = f.z + l.oz * 0.16;
-  boxAt(w, cx, cz, y - 0.22, y, f.dx, f.dz, 0.6, 0.15, PAL.planter);
-  const flower = pick(PAL.flowers, ctx.rng());
-  for (let i = -2; i <= 2; i++) bush(w, cx + f.dx * i * 0.24, y + 0.06, cz + f.dz * i * 0.24, 0.13, i % 2 ? flower : PAL.bushes[0]);
-}
-
-/** cobertura de entrada (marquise) */
-function canopy(ctx: Ctx, l: WallLayout, k: number, c: THREE.Color) {
-  const w = ctx.w.detail;
-  const f = bayFrame(l, k, BAY[ctx.style]);
-  boxAt(w, f.x + l.ox * 0.45, f.z + l.oz * 0.45, ctx.gMax + 2.6, ctx.gMax + 2.75, f.dx, f.dz, 0.85, 0.45, c);
-}
-
-/** placa da loja sobre o toldo */
-function signBoard(ctx: Ctx, l: WallLayout, y: number, c: THREE.Color) {
-  const w = ctx.w.detail;
-  const mx = (l.a[0] + l.b[0]) / 2;
-  const mz = (l.a[1] + l.b[1]) / 2;
-  const dx = (l.b[0] - l.a[0]) / l.len;
-  const dz = (l.b[1] - l.a[1]) / l.len;
-  const hu = Math.min(l.len * 0.32, 4);
-  boxAt(w, mx + l.ox * 0.08, mz + l.oz * 0.08, y, y + 0.55, dx, dz, hu, 0.08, c);
-  // "letreiro" claro
-  boxAt(w, mx + l.ox * 0.17, mz + l.oz * 0.17, y + 0.17, y + 0.38, dx, dz, hu * 0.7, 0.02, PAL.white);
+/** triângulo de telhado com UV alinhado à inclinação (fiadas horizontais) */
+function roofTri(w: GeometryWriter, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, col: THREE.Color, facing: THREE.Vector3) {
+  const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).normalize();
+  if (n.dot(facing) < 0) n.negate();
+  const e = new THREE.Vector3(0, 1, 0).cross(n);
+  if (e.lengthSq() < 1e-6) e.set(1, 0, 0);
+  e.normalize();
+  const s = n.clone().cross(e).normalize();
+  const uv = (p: THREE.Vector3) => [p.dot(e), -p.dot(s)];
+  w.tri(a, b, c, col, facing, [...uv(a), ...uv(b), ...uv(c)]);
 }
 
 // ----------------------------------------------------------------- telhados
 
-/** telhado de 4 ou 2 águas com espessura, beiral e testeira */
-function pitchedRoof(w: GeometryWriter, r: OrientedRect, top: number, roofC: THREE.Color, wallC: THREE.Color, hip: boolean, pitch = 0.5, eaves = true) {
-  const o = eaves ? 0.45 : 0.08;
+function pitchedRoof(w: GeometryWriter, r: OrientedRect, top: number, roofC: THREE.Color, wallC: THREE.Color, wallLayer: number, roofLayer: number, hip: boolean, pitch = 0.5, eaves = true) {
+  const o = eaves ? 0.5 : 0.1;
   const { cx, cz, ux, uz } = r;
   const vxx = -uz;
   const vzz = ux;
@@ -494,117 +428,229 @@ function pitchedRoof(w: GeometryWriter, r: OrientedRect, top: number, roofC: THR
     pts.forEach((p) => m.add(p));
     return m.divideScalar(pts.length).sub(center).normalize().add(V(0, 0.3, 0));
   };
-  const darker = roofC.clone().multiplyScalar(0.72);
+  w.layer = roofLayer;
   if (hip) {
     const rl = Math.max(0, L - W);
     const R1 = P(-rl, 0, top + h);
     const R2 = P(rl, 0, top + h);
-    w.quad(A, B, R2, R1, roofC, facing([A, B, R2, R1]));
-    w.quad(Cc, D, R1, R2, roofC, facing([Cc, D, R1, R2]));
-    w.tri(B, Cc, R2, roofC, facing([B, Cc, R2]));
-    w.tri(D, A, R1, roofC, facing([D, A, R1]));
+    const f1 = facing([A, B, R2, R1]);
+    roofTri(w, A, B, R2, roofC, f1);
+    roofTri(w, A, R2, R1, roofC, f1);
+    const f2 = facing([Cc, D, R1, R2]);
+    roofTri(w, Cc, D, R1, roofC, f2);
+    roofTri(w, Cc, R1, R2, roofC, f2);
+    roofTri(w, B, Cc, R2, roofC, facing([B, Cc, R2]));
+    roofTri(w, D, A, R1, roofC, facing([D, A, R1]));
   } else {
     const R1 = P(-(L + o), 0, top + h);
     const R2 = P(L + o, 0, top + h);
-    w.quad(A, B, R2, R1, roofC, facing([A, B, R2, R1]));
-    w.quad(Cc, D, R1, R2, roofC, facing([Cc, D, R1, R2]));
-    for (const s of [-1, 1]) {
-      // empena + face grossa do telhado na ponta
-      w.tri(P(s * L, -W, top), P(s * L, W, top), P(s * L, 0, top + h - o * pitch * 0.4), wallC, V(ux * s, 0, uz * s));
-      const e1 = s < 0 ? A : B;
-      const e2 = s < 0 ? D : Cc;
-      const rr = s < 0 ? R1 : R2;
-      w.tri(e1.clone().setY(e1.y - 0.18), e1, rr, darker, V(ux * s, 0, uz * s));
-      w.tri(e2, e2.clone().setY(e2.y - 0.18), rr, darker, V(ux * s, 0, uz * s));
-    }
+    const f1 = facing([A, B, R2, R1]);
+    roofTri(w, A, B, R2, roofC, f1);
+    roofTri(w, A, R2, R1, roofC, f1);
+    const f2 = facing([Cc, D, R1, R2]);
+    roofTri(w, Cc, D, R1, roofC, f2);
+    roofTri(w, Cc, R1, R2, roofC, f2);
+    w.layer = wallLayer;
+    for (const s of [-1, 1]) w.tri(P(s * L, -W, top), P(s * L, W, top), P(s * L, 0, top + h - o * pitch * 0.4), wallC, V(ux * s, 0, uz * s), [-W, top, W, top, 0, top + h]);
   }
+  w.layer = -1;
   if (!eaves) return;
-  // testeira (espessura do telhado) + forro claro sob o beiral
+  const darker = roofC.clone().multiplyScalar(0.55);
   const ring = [A, B, Cc, D];
-  const soffit = PAL.white;
   for (let i = 0; i < 4; i++) {
     const p = ring[i];
     const q = ring[(i + 1) % 4];
     const out = p.clone().add(q).multiplyScalar(0.5).sub(center).setY(0);
-    w.quad(p.clone().setY(yb - 0.18), q.clone().setY(yb - 0.18), q, p, darker, out);
+    w.quad(p.clone().setY(yb - 0.16), q.clone().setY(yb - 0.16), q, p, darker, out);
     const inset = (pt: THREE.Vector3) => {
       const lx = (pt.x - cx) * ux + (pt.z - cz) * uz;
       const lz = (pt.x - cx) * vxx + (pt.z - cz) * vzz;
       return P(Math.sign(lx) * L, Math.sign(lz) * W, top - 0.02);
     };
-    w.quad(inset(p), inset(q), q.clone().setY(yb - 0.18), p.clone().setY(yb - 0.18), soffit, V(0, -1, 0));
+    w.quad(inset(p), inset(q), q.clone().setY(yb - 0.16), p.clone().setY(yb - 0.16), PAL.white, V(0, -1, 0));
   }
 }
 
-/** telhado em dente de serra (galpões) */
-function sawtoothRoof(w: GeometryWriter, r: OrientedRect, top: number, roofC: THREE.Color, glassC: THREE.Color) {
-  const teeth = Math.max(2, Math.floor((r.hl * 2) / 5));
+function sawtoothRoof(w: GeometryWriter, r: OrientedRect, top: number, roofC: THREE.Color, roofLayer: number) {
+  const teeth = Math.max(2, Math.floor((r.hl * 2) / 6));
   const tw = (r.hl * 2) / teeth;
-  const h = Math.min(2.4, tw * 0.5);
+  const h = Math.min(2.6, tw * 0.45);
   const vxx = -r.uz;
   const vzz = r.ux;
   const P = (su: number, sv: number, y: number) => V(r.cx + r.ux * su + vxx * sv, y, r.cz + r.uz * su + vzz * sv);
   for (let i = 0; i < teeth; i++) {
     const s0 = -r.hl + i * tw;
     const s1 = s0 + tw;
-    // água inclinada
-    w.quad(P(s0, -r.hw, top), P(s0, r.hw, top), P(s1, r.hw, top + h), P(s1, -r.hw, top + h), roofC, V(-r.ux, 1, -r.uz));
-    // face vertical envidraçada
-    w.quad(P(s1, -r.hw, top), P(s1, r.hw, top), P(s1, r.hw, top + h), P(s1, -r.hw, top + h), glassC, V(r.ux, 0, r.uz));
-    // laterais triangulares
+    w.layer = roofLayer;
+    const f = V(-r.ux, 1, -r.uz);
+    roofTri(w, P(s0, -r.hw, top), P(s0, r.hw, top), P(s1, r.hw, top + h), roofC, f);
+    roofTri(w, P(s0, -r.hw, top), P(s1, r.hw, top + h), P(s1, -r.hw, top + h), roofC, f);
+    w.layer = -1;
+    // face envidraçada (claraboia) — cinza-azulado
+    w.quad(P(s1, -r.hw, top), P(s1, r.hw, top), P(s1, r.hw, top + h), P(s1, -r.hw, top + h), PAL.glassRail, V(r.ux, 0, r.uz));
     for (const sv of [-r.hw, r.hw]) w.tri(P(s0, sv, top), P(s1, sv, top), P(s1, sv, top + h), roofC, V(vxx * Math.sign(sv), 0, vzz * Math.sign(sv)));
   }
 }
 
-// ------------------------------------------------------------------ prédios
+// ------------------------------------------------------------ peças de fachada
+
+function bayFrame(l: WallLayout, k: number, bay: number) {
+  const dx = (l.b[0] - l.a[0]) / l.len;
+  const dz = (l.b[1] - l.a[1]) / l.len;
+  const s = l.margin + (k + 0.5) * bay;
+  return { x: l.a[0] + dx * s, z: l.a[1] + dz * s, dx, dz };
+}
+
+/** toldo de lona (liso, com franja) sobre o vão */
+function awning(ctx: Ctx, l: WallLayout, k: number, y: number, c: THREE.Color, striped: boolean) {
+  const w = ctx.w.detail;
+  const bay = BAY[ctx.style];
+  const f = bayFrame(l, k, bay);
+  const half = bay / 2 - 0.08;
+  const depth = 1.1;
+  const drop = 0.5;
+  const strips = striped ? 6 : 1;
+  for (let i = 0; i < strips; i++) {
+    const s0 = -half + (i / strips) * half * 2;
+    const s1 = -half + ((i + 1) / strips) * half * 2;
+    const cc = striped && i % 2 ? PAL.white : c;
+    const P = (s: number, out: number, yy: number) => V(f.x + f.dx * s + l.ox * out, yy, f.z + f.dz * s + l.oz * out);
+    w.quad(P(s0, 0.05, y), P(s1, 0.05, y), P(s1, depth, y - drop), P(s0, depth, y - drop), cc, V(l.ox, 1.5, l.oz));
+    w.quad(P(s0, depth, y - drop), P(s1, depth, y - drop), P(s1, depth, y - drop - 0.2), P(s0, depth, y - drop - 0.2), cc, V(l.ox, 0, l.oz));
+  }
+  for (const s of [-half, half]) {
+    const P = (out: number, yy: number) => V(f.x + f.dx * s + l.ox * out, yy, f.z + f.dz * s + l.oz * out);
+    w.tri(P(0.05, y), P(depth, y - drop), P(depth, y - drop - 0.2), c, V(f.dx * Math.sign(s), 0, f.dz * Math.sign(s)));
+  }
+}
+
+/** sacada: laje + guarda-corpo (vidro ou alvenaria) */
+function balcony(ctx: Ctx, l: WallLayout, k: number, y: number, slab: THREE.Color, rail: THREE.Color, solid: boolean) {
+  const w = ctx.w.detail;
+  const bay = BAY[ctx.style];
+  const f = bayFrame(l, k, bay);
+  const hu = bay * 0.44;
+  const d = 1.15;
+  w.box(f.x + l.ox * (d / 2), f.z + l.oz * (d / 2), y - 0.16, y, f.dx, f.dz, hu, d / 2, slab);
+  const rh = solid ? 1.0 : 1.05;
+  w.box(f.x + l.ox * (d - 0.04), f.z + l.oz * (d - 0.04), y, y + rh, f.dx, f.dz, hu, 0.04, rail);
+  for (const s of [-1, 1]) w.box(f.x + f.dx * hu * s + l.ox * (d / 2), f.z + f.dz * hu * s + l.oz * (d / 2), y, y + rh, f.dx, f.dz, 0.04, d / 2, rail);
+  if (!solid) w.box(f.x + l.ox * (d - 0.04), f.z + l.oz * (d - 0.04), y + rh, y + rh + 0.05, f.dx, f.dz, hu, 0.05, PAL.metal);
+}
+
+/** letreiro (atlas) preso na parede, acima do térreo */
+function signOnWall(ctx: Ctx, atlas: SignAtlas, l: WallLayout, y: number, cell: number, maxW = 6, out = 0.12) {
+  const mx = (l.a[0] + l.b[0]) / 2;
+  const mz = (l.a[1] + l.b[1]) / 2;
+  const dx = (l.b[0] - l.a[0]) / l.len;
+  const dz = (l.b[1] - l.a[1]) / l.len;
+  const hw = Math.min(l.len * 0.42, maxW / 2);
+  const hh = Math.min(hw * 0.5, 0.75);
+  // caixa do letreiro
+  ctx.w.detail.box(mx + l.ox * (out / 2), mz + l.oz * (out / 2), y - hh, y + hh, dx, dz, hw, out / 2, PAL.dark);
+  // a parede corre da direita p/ esquerda para quem olha de fora: U invertido
+  const [u0, v0, u1, v1] = atlas.uv(cell);
+  const P = (s: number, yy: number) => V(mx + dx * s + l.ox * (out + 0.01), yy, mz + dz * s + l.oz * (out + 0.01));
+  ctx.w.signs.quad(P(-hw, y - hh), P(hw, y - hh), P(hw, y + hh), P(-hw, y + hh), PAL.white, V(l.ox, 0, l.oz), [u1, v0, u0, v0, u0, v1, u1, v1]);
+}
+
+/** outdoor na cobertura (estrutura metálica + painel) virado para a rua */
+function billboard(ctx: Ctx, atlas: SignAtlas, l: WallLayout, top: number, cell: number) {
+  const d = ctx.w.detail;
+  const mx = (l.a[0] + l.b[0]) / 2 - l.ox * 1.5;
+  const mz = (l.a[1] + l.b[1]) / 2 - l.oz * 1.5;
+  const dx = (l.b[0] - l.a[0]) / l.len;
+  const dz = (l.b[1] - l.a[1]) / l.len;
+  const hw = Math.min(4.5, l.len * 0.4);
+  const y0 = top + 1.4;
+  const y1 = y0 + hw * 0.9;
+  for (const s of [-0.7, 0.7]) d.box(mx + dx * hw * s, mz + dz * hw * s, top, y0 + 0.2, dx, dz, 0.08, 0.08, PAL.metal);
+  d.box(mx, mz, y0 - 0.1, y1 + 0.1, dx, dz, hw + 0.1, 0.12, PAL.dark);
+  // a parede corre da direita p/ esquerda para quem olha de fora: U invertido
+  const [u0, v0, u1, v1] = atlas.uv(cell);
+  const P = (s: number, yy: number) => V(mx + dx * s + l.ox * 0.13, yy, mz + dz * s + l.oz * 0.13);
+  ctx.w.signs.quad(P(-hw, y0), P(hw, y0), P(hw, y1), P(-hw, y1), PAL.white, V(l.ox, 0, l.oz), [u1, v0, u0, v0, u0, v1, u1, v1]);
+}
+
+/** equipamentos de cobertura (ar-condicionado, caixa d'água, casa de máquinas) */
+function rooftop(ctx: Ctx, r: OrientedRect, top: number, opts: { ac: number; tank: boolean; machine: boolean; hvac?: boolean }) {
+  const d = ctx.w.detail;
+  const rx = r.ux;
+  const rz = r.uz;
+  const at = (fu: number, fv: number) => [r.cx + rx * r.hl * fu - rz * r.hw * fv, r.cz + rz * r.hl * fu + rx * r.hw * fv] as const;
+  for (let i = 0; i < opts.ac; i++) {
+    const [x, z] = at(-0.5 + i * 0.25, -0.35 + ctx.rng() * 0.2);
+    d.box(x, z, top, top + 0.7, rx, rz, 0.55, 0.4, PAL.steel);
+    cylinder(d, x, z, top + 0.7, top + 0.72, 0.3, PAL.dark, 8);
+  }
+  if (opts.tank) {
+    const [x, z] = at(0.55, 0.35);
+    d.box(x, z, top, top + 0.4, rx, rz, 0.9, 0.9, PAL.metal);
+    cylinder(d, x, z, top + 0.4, top + 1.8, 0.75, PAL.tank, 10, PAL.white);
+  }
+  if (opts.machine) {
+    const [x, z] = at(-0.1, 0.2);
+    const hu = Math.min(2.4, r.hl * 0.3);
+    const hv = Math.min(2.0, r.hw * 0.4);
+    d.box(x, z, top, top + 2.8, rx, rz, hu, hv, PAL.white);
+    d.box(x, z, top + 2.8, top + 3.0, rx, rz, hu + 0.15, hv + 0.15, PAL.metal);
+  }
+  if (opts.hvac) {
+    // dutos e exaustores (lojas grandes/escritórios)
+    for (let i = 0; i < 3; i++) {
+      const [x, z] = at(-0.6 + i * 0.6, 0);
+      cylinder(d, x, z, top, top + 1.2, 0.6, PAL.steel, 10, PAL.dark);
+    }
+    const [ax, az] = at(-0.6, -0.4);
+    const [bx, bz] = at(0.6, -0.4);
+    const len = Math.hypot(bx - ax, bz - az);
+    d.box((ax + bx) / 2, (az + bz) / 2, top + 0.6, top + 1.1, (bx - ax) / len, (bz - az) / len, len / 2, 0.3, PAL.steel);
+  }
+}
+
+// ------------------------------------------------------------------ escolha
 
 export interface BuildingStyle {
   category: BuildingCategory;
-  wall: THREE.Color;
-  trim: THREE.Color;
-  roof: THREE.Color;
-  facade: number;
+  archetype: Archetype;
   seed: number;
 }
 
+/** escolhe o arquétipo (determinístico) */
 export function styleFor(b: Building): BuildingStyle {
-  const seed = b.generated ? hashId(b.lotId.length * 7919 + hashCode(b.lotId)) : hashId(b.osmId);
-  const rng = mulberry32(seed);
+  const seed = (b.generated ? hashId(b.lotId.length * 7919 + hashCode(b.lotId)) : hashId(b.osmId)) % 100000;
+  const r = mulberry32(seed)();
   const cat = categoryOf(b);
-  const tall = b.levels >= 4 || b.type === 'apartments';
-  let wall: THREE.Color;
-  let roof: THREE.Color = PAL.roofFlat;
-  let facade: number;
+  const lv = Math.max(1, Math.round(b.levels));
+  const area = b.area || polygonArea(b.outer);
+  let a: Archetype;
   switch (cat) {
-    case 'commercial':
-      wall = pick(PAL.comWalls, rng());
-      facade = FacadeStyle.commercial;
-      break;
-    case 'industrial':
-      wall = pick(PAL.indWalls, rng());
-      roof = pick(PAL.indRoofs, rng());
-      facade = FacadeStyle.industrial;
+    case 'religious':
+      a = 'igreja';
       break;
     case 'institutional':
-      wall = pick(PAL.instWalls, rng());
-      facade = FacadeStyle.institutional;
+      a = 'institucional';
       break;
-    case 'religious':
-      wall = PAL.church;
-      roof = PAL.resRoofs[0];
-      facade = FacadeStyle.plain;
+    case 'industrial':
+      a = r < 0.6 ? 'galpao-metalico' : 'fabrica-tijolo';
+      break;
+    case 'commercial':
+      if (area > 600 && lv <= 2) a = 'supermercado';
+      else if (lv >= 4) a = r < 0.5 ? 'escritorios' : r < 0.75 ? 'torre-moderna' : 'loja-tijolo';
+      else a = r < 0.45 ? 'loja-tijolo' : 'loja-reboco';
       break;
     default:
-      wall = tall ? pick(PAL.aptWalls, rng()) : pick(PAL.resWalls, rng());
-      roof = pick(PAL.resRoofs, rng() * 0.999);
-      facade = tall ? FacadeStyle.apartment : FacadeStyle.house;
+      if (lv >= 6 || b.type === 'apartments') a = r < 0.4 ? 'bloco-bnh' : r < 0.7 ? 'torre-tijolo' : 'torre-moderna';
+      else if (lv >= 3) a = r < 0.5 ? 'predio-baixo' : r < 0.8 ? 'torre-tijolo' : 'bloco-bnh';
+      else a = r < 0.38 ? 'colonial' : r < 0.6 ? 'casa-moderna' : r < 0.8 ? 'sobrado-tijolo' : 'casa-simples';
   }
-  const trim = cat === 'religious' ? PAL.churchTrim : pick(PAL.trims, rng());
-  return { category: cat, wall, trim, roof, facade, seed: seed % 1000 };
+  return { category: cat, archetype: a, seed };
 }
 
-/** Escreve o prédio (corpo + telhado + peças) nos escritores. */
-export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField, detail: Detail, front?: FrontTest) {
+// ------------------------------------------------------------------ prédios
+
+/** Escreve o prédio nos escritores (paredes, peças, letreiros). */
+export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField, detail: Detail, front?: FrontTest, signs?: SignAtlas) {
   const st = styleFor(b);
   const rng = mulberry32(st.seed * 7 + 13);
   const { gMin, gMax } = groundRange(b, hf);
@@ -612,189 +658,270 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
   const area = b.area || polygonArea(b.outer);
   const rect = minAreaRect(b.outer);
   const rectangular = area / (4 * rect.hl * rect.hw) > 0.82 && !b.holes?.length;
-  const cat = st.category;
   const levels = Math.max(1, Math.round(b.levels));
+  const arch = st.archetype;
+
+  // parâmetros por arquétipo
+  let style: number = FacadeStyle.house;
+  let wallLayer: number = Layer.plaster;
+  let wallC = PAL.white;
+  let trim = pick(PAL.trims, rng());
+  let roof: 'hip' | 'gable' | 'flat' | 'saw' = 'flat';
+  let roofLayer: number = Layer.roofConcrete;
+  let roofC = pick(PAL.natural, rng());
+  let roofBand = false;
+  switch (arch) {
+    case 'colonial':
+      style = FacadeStyle.house;
+      wallC = pick(PAL.colonial, rng());
+      roof = rng() < 0.6 ? 'hip' : 'gable';
+      roofLayer = Layer.roofClay;
+      break;
+    case 'casa-simples':
+      style = FacadeStyle.house;
+      wallC = pick(PAL.colonial, rng());
+      roof = 'gable';
+      roofLayer = rng() < 0.6 ? Layer.roofGrey : Layer.roofClay;
+      break;
+    case 'casa-moderna':
+      style = FacadeStyle.modern;
+      wallC = pick(PAL.modern, rng());
+      wallLayer = rng() < 0.3 ? Layer.tiles : Layer.plaster;
+      trim = PAL.dark;
+      roof = 'flat';
+      break;
+    case 'sobrado-tijolo':
+      style = FacadeStyle.brick;
+      wallLayer = rng() < 0.6 ? Layer.brickRed : Layer.brickYellow;
+      wallC = pick(PAL.natural, rng());
+      roof = 'gable';
+      roofLayer = rng() < 0.5 ? Layer.roofSlate : Layer.roofClay;
+      break;
+    case 'predio-baixo':
+      style = FacadeStyle.apartment;
+      wallC = pick(PAL.colonial, rng());
+      roof = 'flat';
+      roofBand = true;
+      break;
+    case 'bloco-bnh':
+      style = FacadeStyle.slab;
+      wallLayer = rng() < 0.5 ? Layer.panels : Layer.concrete;
+      wallC = pick(PAL.slab, rng());
+      roofBand = true;
+      break;
+    case 'torre-tijolo':
+      style = FacadeStyle.brick;
+      wallLayer = rng() < 0.65 ? Layer.brickRed : Layer.brickYellow;
+      wallC = pick(PAL.natural, rng());
+      roofBand = true;
+      break;
+    case 'torre-moderna':
+      style = FacadeStyle.apartment;
+      wallLayer = rng() < 0.5 ? Layer.tiles : Layer.concrete;
+      wallC = pick(PAL.towerGrey, rng());
+      roofBand = true;
+      break;
+    case 'loja-tijolo':
+      style = FacadeStyle.commercial;
+      wallLayer = rng() < 0.6 ? Layer.brickRed : Layer.brickYellow;
+      wallC = pick(PAL.natural, rng());
+      roofBand = true;
+      break;
+    case 'loja-reboco':
+      style = FacadeStyle.commercial;
+      wallC = pick(PAL.plasterShop, rng());
+      roof = levels === 1 && rng() < 0.25 && rect.hw < 12 ? 'gable' : 'flat';
+      roofLayer = Layer.roofClay;
+      break;
+    case 'supermercado':
+      style = FacadeStyle.commercial;
+      wallLayer = rng() < 0.5 ? Layer.tiles : Layer.concrete;
+      wallC = pick(PAL.plasterShop, rng());
+      roofLayer = Layer.roofMetal;
+      roofBand = true;
+      break;
+    case 'escritorios':
+      style = FacadeStyle.office;
+      wallLayer = Layer.concrete;
+      wallC = pick(PAL.towerGrey, rng());
+      trim = pick([C('#2d3b48'), C('#3b4a3f'), C('#4a4038'), C('#20303f')], rng());
+      roofBand = true;
+      break;
+    case 'galpao-metalico':
+      style = FacadeStyle.industrial;
+      wallLayer = Layer.metal;
+      wallC = pick(PAL.industrial, rng());
+      roof = rectangular && rect.hl > 8 && rng() < 0.5 ? 'saw' : 'gable';
+      roofLayer = Layer.roofMetal;
+      roofC = pick(PAL.industrial, rng());
+      break;
+    case 'fabrica-tijolo':
+      style = FacadeStyle.industrial;
+      wallLayer = Layer.brickRed;
+      wallC = pick(PAL.natural, rng());
+      roof = rectangular && rect.hl > 7 ? 'saw' : 'gable';
+      roofLayer = Layer.roofMetal;
+      roofC = C('#8c949b');
+      break;
+    case 'institucional':
+      style = FacadeStyle.institutional;
+      wallC = pick(PAL.institutional, rng());
+      wallLayer = rng() < 0.3 ? Layer.tiles : Layer.plaster;
+      roofBand = true;
+      break;
+    case 'igreja':
+      style = FacadeStyle.plain;
+      wallC = PAL.church;
+      trim = PAL.churchTrim;
+      break;
+  }
+  const pitchedOk = rectangular && rect.hw < 14 && area < 1200;
+  if ((roof === 'hip' || roof === 'gable') && !pitchedOk) roof = 'flat';
+  if (roof === 'saw' && !rectangular) roof = 'flat';
+  // telhado é a "cara" de longe: no LOD baixo simplifica, mas mantém o tipo
   const top = gMax + Math.max(b.height, levels * FLOOR_H);
-  const ctx: Ctx = {
-    w: ws,
-    rng,
-    gMax,
-    topV: top - gMax,
-    seed: st.facade === FacadeStyle.plain ? 0 : 0.05 + st.seed / 1050,
-    trim: st.trim,
-    style: st.facade,
-    detail,
-  };
-  const frontOf = (l: WallLayout) => !!front?.((l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2, l.ox, l.oz);
+  const ctx: Ctx = { w: ws, rng, gMax, topV: top - gMax, seed: style === FacadeStyle.plain ? 0 : 0.05 + (st.seed % 1000) / 1050, trim, style };
+  const frontOf = (l: WallLayout) => l.len > 3 && !!front?.((l.a[0] + l.b[0]) / 2, (l.a[1] + l.b[1]) / 2, l.ox, l.oz);
 
-  if (cat === 'religious' && rectangular) return writeChurch(ws, b, rect, base, top, gMax, st, detail);
+  if (arch === 'igreja' && rectangular) return writeChurch(ws, b, rect, base, top, gMax, ctx, detail);
 
-  // corpo: retangular = octógono chanfrado; senão o polígono real
-  const box: Box = { cx: rect.cx, cz: rect.cz, ux: rect.ux, uz: rect.uz, hu: rect.hl, hv: rect.hw };
-  const ring = rectangular ? chamferRing(box, Math.min(0.45, rect.hw * 0.12)) : orientCCW(b.outer);
-  let frontCount = 0;
-  const walls = writeWalls(ctx, ring, base, top, st.wall, (_i, l) => {
-    const f = l.len > 3 && frontOf(l);
-    if (f) frontCount++;
+  const ring = rectangular ? boxRing(rect, style === FacadeStyle.office || style === FacadeStyle.slab ? 0 : Math.min(0.3, rect.hw * 0.08)) : orientCCW(b.outer);
+  let anyFront = false;
+  const walls = writeWalls(ctx, ring, base, top, wallC, wallLayer, (l) => {
+    const f = frontOf(l);
+    anyFront ||= f;
     return f;
   });
-  // sem frente detectada: a parede mais longa vira frente (peças continuam visíveis)
-  if (!frontCount && walls.length) {
-    const longest = walls.reduce((a, l) => (l.len > a.len ? l : a));
-    longest.front = true;
-  }
-  for (const h of b.holes ?? []) writeWalls(ctx, orientCCW(h).reverse(), base, top, st.wall, () => false);
-
-  const pitchedOk = rectangular && rect.hw < 14 && area < 900;
+  if (!anyFront && walls.length) walls.reduce((a, l) => (l.len > a.len ? l : a)).front = true;
+  for (const h of b.holes ?? []) writeWalls(ctx, orientCCW(h).reverse(), base, top, wallC, wallLayer, () => false);
   const d = ws.detail;
 
-  if (cat === 'industrial') {
-    if (rectangular && rect.hl > 7 && detail === 'high') {
-      sawtoothRoof(d, rect, top, st.roof, PAL.glassRail);
-      cap(d, ring, top - 0.01, st.roof);
-    } else if (pitchedOk) pitchedRoof(d, rect, top, st.roof, st.wall, false, 0.22, detail === 'high');
-    else {
-      cap(d, ring, top, st.roof);
-      parapet(d, ring, top, 0.6, st.wall, st.wall);
-    }
-    if (detail === 'high') {
-      // portão com marquise, chaminé listrada e tanques
-      for (const l of walls) if (l.front && l.bays) canopy({ ...ctx, style: FacadeStyle.industrial }, l, Math.floor(l.bays / 2), PAL.metal);
-      if (rng() < 0.45 && rectangular) {
-        const sx = rect.cx + rect.ux * rect.hl * 0.6;
-        const sz = rect.cz + rect.uz * rect.hl * 0.6;
-        const ch = top + 6 + rng() * 6;
-        cylinder(d, sx, sz, top, ch, 0.55, PAL.metal, 8, PAL.dark);
-        cylinder(d, sx, sz, ch - 2.2, ch - 1.2, 0.58, PAL.chimneyRed, 8);
-      }
-      if (rng() < 0.4 && rectangular) {
-        const tx = rect.cx - rect.ux * rect.hl * 0.55;
-        const tz = rect.cz - rect.uz * rect.hl * 0.55;
-        cylinder(d, tx, tz, top, top + 3.2, Math.min(1.6, rect.hw * 0.4), PAL.white, 12, PAL.metal);
-      }
-    }
-    return;
+  // ---- telhado
+  if (roof === 'hip' || roof === 'gable') pitchedRoof(d, rect, top, roofC, wallC, wallLayer, roofLayer, roof === 'hip', arch === 'galpao-metalico' || arch === 'fabrica-tijolo' ? 0.22 : 0.5, detail === 'high');
+  else if (roof === 'saw' && detail === 'high') {
+    sawtoothRoof(d, rect, top, roofC, roofLayer);
+    cap(d, ring, top - 0.02, roofC, roofLayer);
+  } else {
+    cap(d, ring, top + 0.01, roofC, roof === 'saw' ? roofLayer : arch === 'supermercado' ? Layer.roofMetal : Layer.roofConcrete, b.holes);
+    if (detail === 'high') parapet(d, ring, top, roofBand || arch === 'casa-moderna' ? 0.9 : 0.6, wallC, wallLayer);
+  }
+  if (detail === 'low') return;
+
+  // ---- faixas de laje / cornija
+  if (rectangular && (style === FacadeStyle.slab || style === FacadeStyle.apartment || style === FacadeStyle.institutional)) {
+    const bc = style === FacadeStyle.slab ? PAL.white : wallC.clone().multiplyScalar(0.82);
+    for (let f = 1; f < levels; f++) band(d, ring, gMax + f * FLOOR_H - 0.12, gMax + f * FLOOR_H + 0.1, 0.08, bc, Layer.concrete);
+  }
+  if (rectangular && style === FacadeStyle.brick && levels >= 3) band(d, ring, top - 0.6, top - 0.3, 0.18, C('#d9d2c4'), Layer.concrete);
+  if (rectangular && style === FacadeStyle.office) {
+    // embasamento (térreo) recuado em pedra/concreto escuro
+    band(d, ring, gMax + FLOOR_H - 0.25, gMax + FLOOR_H + 0.25, 0.25, C('#5a6066'), Layer.concrete);
   }
 
-  if (detail === 'low') {
-    if ((cat === 'residential' && levels <= 2 && pitchedOk) || (cat === 'commercial' && levels === 1 && pitchedOk && rng() < 0.3))
-      pitchedRoof(d, rect, top, st.roof, st.wall, true, 0.5, false);
-    else cap(d, ring, top, cat === 'residential' && levels <= 3 ? PAL.garden : PAL.roofFlat);
-    return;
-  }
-
-  // ---- faixas de laje (maquete) em prédios altos e institucionais
-  if ((st.facade === FacadeStyle.apartment || st.facade === FacadeStyle.institutional) && rectangular) {
-    const bandC = pick(PAL.aptBands, rng());
-    for (let f = 1; f < levels; f++) band(d, ring, gMax + f * FLOOR_H - 0.12, gMax + f * FLOOR_H + 0.08, 0.1, bandC);
-  }
-
-  // ---- peças da fachada frontal
-  const bay = BAY[st.facade];
+  // ---- peças por parede
+  const bay = BAY[style];
   for (const l of walls) {
     if (!l.bays) continue;
-    if (cat === 'commercial' && l.front) {
-      const c1 = pick(PAL.awnings, rng());
-      for (let k = 0; k < l.bays; k++) awning(ctx, l, k, gMax + 3.0, c1, PAL.white);
-      if (levels === 1) signBoard(ctx, l, top + 0.05, c1);
-      else signBoard(ctx, l, gMax + 3.15, c1);
+    const storefront = style === FacadeStyle.commercial || style === FacadeStyle.office;
+    if (storefront && l.front) {
+      const c = pick(PAL.awnings, rng());
+      if (arch !== 'escritorios' && arch !== 'supermercado') for (let k = 0; k < l.bays; k++) if (rng() < 0.75) awning(ctx, l, k, gMax + 3.0, c, rng() < 0.35);
+      if (signs) {
+        const cell = signs.signFor(b.name ?? b.pois?.[0]?.name, st.seed);
+        if (arch === 'supermercado') signOnWall(ctx, signs, l, top - 1.0, cell, 12, 0.2);
+        else signOnWall(ctx, signs, l, levels === 1 ? top + 0.0 : gMax + 3.45, cell, 6);
+      }
     }
-    if (st.facade === FacadeStyle.house && l.front) {
-      // porta no vão do meio com marquise; floreiras em parte das janelas
-      canopy(ctx, l, Math.floor(l.bays / 2), st.trim);
-      for (let f = levels > 1 ? 1 : 0; f < levels; f++)
-        for (let k = 0; k < l.bays; k++) {
-          if (f === 0 && k === Math.floor(l.bays / 2)) continue;
-          if (rng() < 0.45) flowerBox(ctx, l, k, gMax + f * FLOOR_H + 0.92);
-        }
-      if (levels >= 2) for (let k = 0; k < l.bays; k++) if (rng() < 0.3) balcony(ctx, l, k, gMax + FLOOR_H + 0.02, st.wall, st.trim);
-    }
-    if (st.facade === FacadeStyle.apartment && l.len > 6) {
+    if (style === FacadeStyle.house && l.front && levels >= 2) for (let k = 0; k < l.bays; k++) if (rng() < 0.3) balcony(ctx, l, k, gMax + FLOOR_H + 0.02, wallC, PAL.dark, false);
+    if ((style === FacadeStyle.slab || style === FacadeStyle.apartment) && l.len > 6) {
+      const glassRail = style === FacadeStyle.apartment;
       for (let f = 1; f < levels; f++)
-        for (let k = 0; k < l.bays; k++) if ((k + f) % 2 === 0 && l.front) balcony(ctx, l, k, gMax + f * FLOOR_H + 0.02, PAL.white, PAL.glassRail);
+        for (let k = 0; k < l.bays; k++) {
+          const pattern = style === FacadeStyle.slab ? (k % 2 === 0) : (k + f) % 2 === 0;
+          if (pattern && (l.front || style === FacadeStyle.slab)) balcony(ctx, l, k, gMax + f * FLOOR_H + 0.02, PAL.white, glassRail ? PAL.glassRail : wallC, !glassRail);
+        }
     }
-    if (st.facade === FacadeStyle.institutional && l.front) canopy(ctx, l, Math.floor(l.bays / 2), PAL.white);
-    void bay;
+    if (style === FacadeStyle.industrial && l.front) {
+      const k = Math.floor(l.bays / 2);
+      const f = bayFrame(l, k, bay);
+      d.box(f.x + l.ox * 1.2, f.z + l.oz * 1.2, gMax + 3.6, gMax + 3.8, f.dx, f.dz, bay * 1.2, 1.2, PAL.metal);
+    }
+  }
+
+  // ---- outdoor em coberturas de comércio/torres
+  if (signs && rectangular && (style === FacadeStyle.commercial || arch === 'torre-moderna' || arch === 'escritorios') && rng() < 0.22) {
+    const fw = walls.find((l) => l.front && l.len > 6);
+    if (fw) billboard(ctx, signs, fw, top + 0.6, signs.adFor(st.seed));
   }
 
   // ---- cobertura
-  const pitched = (cat === 'residential' && levels <= 2 && pitchedOk && rng() < 0.82) || (cat === 'commercial' && levels === 1 && pitchedOk && rng() < 0.3);
-  if (pitched) {
-    pitchedRoof(d, rect, top, st.roof, st.wall, rng() < 0.6, 0.5, true);
-    if (rng() < 0.45) {
-      const sx = rect.cx + rect.ux * rect.hl * 0.45 - rect.uz * rect.hw * 0.35;
-      const sz = rect.cz + rect.uz * rect.hl * 0.45 + rect.ux * rect.hw * 0.35;
-      boxAt(d, sx, sz, top, top + Math.min(rect.hw * 0.5, 2.6) + 0.8, rect.ux, rect.uz, 0.32, 0.32, st.wall);
-      boxAt(d, sx, sz, top + Math.min(rect.hw * 0.5, 2.6) + 0.8, top + Math.min(rect.hw * 0.5, 2.6) + 0.95, rect.ux, rect.uz, 0.4, 0.4, PAL.dark);
+  if (roof === 'flat' || roof === 'saw') {
+    if (rectangular)
+      rooftop(ctx, rect, top, {
+        ac: style === FacadeStyle.commercial || style === FacadeStyle.office ? 2 + Math.floor(rng() * 3) : rng() < 0.4 ? 1 : 0,
+        tank: rng() < 0.7 && arch !== 'supermercado',
+        machine: levels >= 5,
+        hvac: arch === 'supermercado' || arch === 'escritorios',
+      });
+  } else if ((arch === 'colonial' || arch === 'sobrado-tijolo') && rng() < 0.45) {
+    // chaminé
+    const sx = rect.cx + rect.ux * rect.hl * 0.45 - rect.uz * rect.hw * 0.3;
+    const sz = rect.cz + rect.uz * rect.hl * 0.45 + rect.ux * rect.hw * 0.3;
+    const ch = top + Math.min(rect.hw * 0.5, 2.6) + 0.9;
+    d.layer = arch === 'sobrado-tijolo' ? Layer.brickRed : Layer.plaster;
+    d.box(sx, sz, top, ch, rect.ux, rect.uz, 0.32, 0.32, arch === 'sobrado-tijolo' ? PAL.white : wallC);
+    d.layer = -1;
+    d.box(sx, sz, ch, ch + 0.12, rect.ux, rect.uz, 0.4, 0.4, PAL.dark);
+  }
+  // indústria: chaminé e tanques
+  if (style === FacadeStyle.industrial && rectangular) {
+    if (rng() < 0.5) {
+      const sx = rect.cx + rect.ux * rect.hl * 0.6;
+      const sz = rect.cz + rect.uz * rect.hl * 0.6;
+      const ch = top + 8 + rng() * 8;
+      d.layer = Layer.brickRed;
+      cylinder(d, sx, sz, top, ch, 0.7, PAL.white, 10, PAL.dark);
+      d.layer = -1;
+      cylinder(d, sx, sz, ch - 1.2, ch, 0.74, PAL.dark, 10, PAL.dark);
     }
-    return;
-  }
-  // laje plana: cornija + parapeito
-  if (rectangular) band(d, ring, top - 0.05, top + 0.18, 0.12, PAL.white);
-  const garden = cat === 'residential' && levels <= 4 && rng() < 0.75;
-  cap(d, ring, top + 0.01, garden ? PAL.garden : PAL.roofFlat, b.holes);
-  parapet(d, ring, top + 0.18, 0.55, st.wall, PAL.parapet);
-  // equipamentos / jardim na cobertura
-  const rx = rect.ux;
-  const rz = rect.uz;
-  const inside = (fu: number, fv: number) => [rect.cx + rx * rect.hl * fu - rz * rect.hw * fv, rect.cz + rz * rect.hl * fu + rx * rect.hw * fv] as const;
-  if (garden) {
-    const n = 2 + Math.floor(rng() * 4);
-    for (let i = 0; i < n; i++) {
-      const [x, z] = inside((rng() - 0.5) * 1.3, (rng() - 0.5) * 1.3);
-      bush(d, x, top + 0.35, z, 0.35 + rng() * 0.35, pick(PAL.bushes, rng()));
+    if (rng() < 0.4) {
+      const tx = rect.cx - rect.ux * rect.hl * 0.55;
+      const tz = rect.cz - rect.uz * rect.hl * 0.55;
+      cylinder(d, tx, tz, top, top + 3.5, Math.min(1.8, rect.hw * 0.4), PAL.steel, 12, PAL.metal);
     }
-    const [px, pz] = inside(-0.55, 0.55);
-    boxAt(d, px, pz, top, top + 0.45, rx, rz, 0.7, 0.3, PAL.planter);
-    bush(d, px, top + 0.55, pz, 0.32, pick(PAL.flowers, rng()));
   }
-  if (rng() < 0.6) {
-    const [x, z] = inside(0.45, -0.35);
-    cylinder(d, x, z, top, top + 1.3, 0.55, PAL.tank, 8, PAL.white);
-  }
-  const acs = cat === 'commercial' || st.facade === FacadeStyle.apartment ? 1 + Math.floor(rng() * 3) : rng() < 0.4 ? 1 : 0;
-  for (let i = 0; i < acs; i++) {
-    const [x, z] = inside(-0.4 + i * 0.3, -0.2);
-    boxAt(d, x, z, top, top + 0.55, rx, rz, 0.45, 0.35, PAL.white);
-  }
-  if (st.facade === FacadeStyle.apartment) {
-    // casa de máquinas
-    const [x, z] = inside(0, 0.2);
-    boxAt(d, x, z, top, top + 2.6, rx, rz, Math.min(2.2, rect.hl * 0.3), Math.min(1.8, rect.hw * 0.4), st.wall);
-    boxAt(d, x, z, top + 2.6, top + 2.8, rx, rz, Math.min(2.4, rect.hl * 0.32), Math.min(2, rect.hw * 0.42), PAL.white);
-  }
-  if (st.facade === FacadeStyle.institutional) {
-    // mastro com bandeira
-    const [x, z] = inside(0.7, 0.7);
-    cylinder(d, x, z, top, top + 5, 0.05, PAL.metal, 5);
-    boxAt(d, x + rx * 0.6, z + rz * 0.6, top + 4.1, top + 4.9, rx, rz, 0.6, 0.02, C('#2f9e44'));
+  if (arch === 'institucional' && rectangular) {
+    const x = rect.cx + rect.ux * rect.hl * 0.7;
+    const z = rect.cz + rect.uz * rect.hl * 0.7;
+    cylinder(d, x, z, top, top + 6, 0.05, PAL.metal, 5);
+    d.box(x + rect.ux * 0.7, z + rect.uz * 0.7, top + 5, top + 5.9, rect.ux, rect.uz, 0.7, 0.02, C('#2f9e44'));
   }
 }
 
-/** Igreja barroca estilizada: nave de 2 águas + torre(s) na fachada. */
-function writeChurch(ws: BuildingWriters, b: Building, r: OrientedRect, base: number, top: number, ground: number, st: BuildingStyle, detail: Detail) {
-  const ctx: Ctx = { w: ws, rng: mulberry32(st.seed), gMax: ground, topV: top - ground, seed: 0, trim: st.trim, style: FacadeStyle.plain, detail };
-  const box: Box = { cx: r.cx, cz: r.cz, ux: r.ux, uz: r.uz, hu: r.hl, hv: r.hw };
-  writeWalls(ctx, rectRing(box), base, top, st.wall, () => false, false);
-  pitchedRoof(ws.detail, r, top, st.roof, st.wall, false, 0.7, detail === 'high');
+/** Igreja barroca: nave de 2 águas + torre(s) na fachada. */
+function writeChurch(ws: BuildingWriters, b: Building, r: OrientedRect, base: number, top: number, ground: number, ctx: Ctx, detail: Detail) {
+  writeWalls(ctx, boxRing(r), base, top, PAL.church, Layer.plaster, () => false, false);
+  pitchedRoof(ws.detail, r, top, pick(PAL.natural, 0.2), PAL.church, Layer.plaster, Layer.roofClay, false, 0.7, detail === 'high');
   if (detail === 'low') return;
   const w = ws.walls;
   const d = ws.detail;
+  const trim = PAL.churchTrim;
   const towers = b.area > 280 ? 2 : 1;
   const ts = Math.min(r.hw * (towers === 2 ? 0.42 : 0.6), 4.2);
   const towerTop = top + Math.max(8, r.hw * 1.2);
   const vxx = -r.uz;
   const vzz = r.ux;
   const offsets = towers === 2 ? [-(r.hw - ts), r.hw - ts] : [0];
-  w.style = [st.trim.r, st.trim.g, st.trim.b, FacadeStyle.plain * 2];
+  w.style = [trim.r, trim.g, trim.b, FacadeStyle.plain * 2];
   for (const off of offsets) {
     const cx = r.cx - r.ux * (r.hl - ts) + vxx * off;
     const cz = r.cz - r.uz * (r.hl - ts) + vzz * off;
-    w.box(cx, cz, ground - 1, towerTop, r.ux, r.uz, ts, ts, st.wall);
-    boxAt(d, cx, cz, towerTop - 3.2, towerTop - 2.95, r.ux, r.uz, ts * 1.08, ts * 1.08, PAL.white);
-    boxAt(d, cx, cz, towerTop, towerTop + 0.45, r.ux, r.uz, ts * 1.14, ts * 1.14, st.trim);
-    // sineira (vão escuro)
-    for (const s of [-1, 1]) boxAt(d, cx + vxx * s * ts * 1.001, cz + vzz * s * ts * 1.001, towerTop - 2.6, towerTop - 0.6, r.ux, r.uz, ts * 0.45, 0.02, PAL.dark);
+    w.layer = Layer.plaster;
+    w.box(cx, cz, ground - 1, towerTop, r.ux, r.uz, ts, ts, PAL.church);
+    w.layer = -1;
+    d.box(cx, cz, towerTop - 3.2, towerTop - 2.95, r.ux, r.uz, ts * 1.08, ts * 1.08, PAL.white);
+    d.box(cx, cz, towerTop, towerTop + 0.45, r.ux, r.uz, ts * 1.14, ts * 1.14, trim);
+    for (const s of [-1, 1]) d.box(cx + vxx * s * ts * 1.001, cz + vzz * s * ts * 1.001, towerTop - 2.6, towerTop - 0.6, r.ux, r.uz, ts * 0.45, 0.02, PAL.dark);
     const apex = V(cx, towerTop + 0.45 + ts * 1.6, cz);
     const P = (su: number, sv: number) => V(cx + r.ux * ts * su + vxx * ts * sv, towerTop + 0.45, cz + r.uz * ts * su + vzz * ts * sv);
     const cs: [number, number][] = [
@@ -806,15 +933,12 @@ function writeChurch(ws: BuildingWriters, b: Building, r: OrientedRect, base: nu
     for (let i = 0; i < 4; i++) {
       const p0 = P(...cs[i]);
       const p1 = P(...cs[(i + 1) % 4]);
-      const f = p0.clone().add(p1).multiplyScalar(0.5).sub(V(cx, towerTop, cz)).setY(0.5);
-      d.tri(p0, p1, apex, st.trim, f);
+      d.tri(p0, p1, apex, trim, p0.clone().add(p1).multiplyScalar(0.5).sub(V(cx, towerTop, cz)).setY(0.5));
     }
-    // cruz
-    boxAt(d, apex.x, apex.z, apex.y, apex.y + 1.2, r.ux, r.uz, 0.06, 0.06, C('#d9b44a'));
-    boxAt(d, apex.x, apex.z, apex.y + 0.7, apex.y + 0.82, r.ux, r.uz, 0.35, 0.06, C('#d9b44a'));
+    d.box(apex.x, apex.z, apex.y, apex.y + 1.2, r.ux, r.uz, 0.06, 0.06, C('#d9b44a'));
+    d.box(apex.x, apex.z, apex.y + 0.7, apex.y + 0.82, r.ux, r.uz, 0.35, 0.06, C('#d9b44a'));
   }
-  // porta principal
   const fx = r.cx - r.ux * (r.hl + 0.02);
   const fz = r.cz - r.uz * (r.hl + 0.02);
-  boxAt(d, fx, fz, ground, ground + 3.6, vxx, vzz, 1.0, 0.05, C('#6b3f24'));
+  d.box(fx, fz, ground, ground + 3.6, vxx, vzz, 1.0, 0.05, C('#5b3a22'));
 }

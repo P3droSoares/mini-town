@@ -6,7 +6,10 @@ import type { WorldState } from './WorldState';
 import { GeometryWriter } from './render/GeometryWriter';
 import { writeDrapedPolygon } from './render/areaGeometry';
 import { type BuildingWriters, type FrontTest, WRITER_KEYS, type WriterKey, createWriters, writeBuilding } from './render/buildingGeometry';
-import { createVertexColorMaterial, createWallMaterial, worldUniforms } from './render/materials';
+import { createBuildingMaterial, createSignMaterial, createTexturedMaterial, worldUniforms } from './render/materials';
+import { SignAtlas } from './render/signAtlas';
+import { writeYard } from './render/yards';
+import { createGroundMaterial } from './render/terrainMesh';
 import { PALETTE, color } from './render/palette';
 import { writeStreet, writeWaterLine } from './render/roadGeometry';
 import { StreetLights } from './render/StreetLights';
@@ -37,6 +40,7 @@ export interface Chunk {
   buildings: Building[];
   streets: WorldState['data']['streets'];
   greens: WorldState['data']['greens'];
+  lots: WorldState['data']['lots'];
 }
 
 export interface BuildOptions {
@@ -77,10 +81,12 @@ export class CityView {
   streetLights!: StreetLights;
   trees!: TreeRenderer;
   readonly materials: Record<WriterKey, THREE.Material>;
+  readonly signs: SignAtlas;
   readonly roadMaterial: THREE.MeshStandardMaterial;
   readonly walkMaterial: THREE.MeshStandardMaterial;
   readonly areaMaterial: THREE.MeshStandardMaterial;
   readonly waterMaterial: THREE.MeshStandardMaterial;
+  readonly poolMaterial = new THREE.MeshStandardMaterial({ color: '#2aa4d8', roughness: 0.04, metalness: 0.1, emissive: '#0b3a52', emissiveIntensity: 0.4 });
   private frontTest: FrontTest;
 
   constructor(
@@ -89,14 +95,18 @@ export class CityView {
     private readonly quality: QualityPreset,
   ) {
     this.root.name = 'city';
+    // letreiros: nomes reais dos estabelecimentos + marcas genéricas
+    this.signs = new SignAtlas(world.data.buildings.flatMap((b) => [b.name, ...(b.pois?.map((p) => p.name) ?? [])]).filter((n): n is string => !!n && n.length < 28));
+    const buildingMat = createBuildingMaterial(tex.atlas);
     this.materials = {
-      walls: createWallMaterial(),
-      detail: createVertexColorMaterial({ roughness: 0.7 }),
+      walls: buildingMat,
+      detail: buildingMat,
+      signs: createSignMaterial(this.signs.texture),
     };
     const off = (f: number) => ({ polygonOffset: true, polygonOffsetFactor: f, polygonOffsetUnits: f });
-    this.roadMaterial = createVertexColorMaterial({ roughness: 0.85, ...off(-2) });
-    this.walkMaterial = createVertexColorMaterial({ roughness: 0.85, ...off(-1) });
-    this.areaMaterial = createVertexColorMaterial({ roughness: 0.95, ...off(-1) });
+    this.roadMaterial = createTexturedMaterial(tex, 'asphalt', 0.8, off(-2));
+    this.walkMaterial = createTexturedMaterial(tex, 'pavement', 0.7, off(-1));
+    this.areaMaterial = createGroundMaterial(tex, off(-1));
     this.waterMaterial = createWaterMaterial(off(-3));
     this.frontTest = (mx, mz, ox, oz) => {
       const dOut = world.distanceToStreet(mx + ox * 3, mz + oz * 3, 30);
@@ -118,7 +128,7 @@ export class CityView {
       const lod = new THREE.LOD();
       lod.position.copy(center);
       group.add(lod);
-      c = { key, cx, cz, center, group, lod, buildings: [], streets: [], greens: [] };
+      c = { key, cx, cz, center, group, lod, buildings: [], streets: [], greens: [], lots: [] };
       this.chunks.set(key, c);
     }
     return c;
@@ -149,12 +159,13 @@ export class CityView {
       this.chunkFor(m[0], m[1]).streets.push(s);
     }
     for (const g of world.data.greens) this.chunkFor(g.outer[0][0], g.outer[0][1]).greens.push(g);
+    for (const l of world.data.lots) if (l.outer && !l.vacant) this.chunkFor(l.centroid[0], l.centroid[1]).lots.push(l);
 
     report(0.08, 'Plantando árvores…');
     await nextFrame();
     const trees = scatterTrees(world, this.quality.trees);
     // (árvores usam grade própria de 500 m — ver TreeRenderer)
-    this.trees = new TreeRenderer(this.quality, world.data.bounds);
+    this.trees = new TreeRenderer(this.tex, this.quality, world.data.bounds);
     lap('arvores');
 
     // água (global, poucas feições)
@@ -196,8 +207,8 @@ export class CityView {
     // terrenos vagos reservados: terra batida + cerca baixa + placa "à venda"
     const lotGround = new GeometryWriter();
     const lotProps = new GeometryWriter();
-    const soil = new THREE.Color('#e6cfa1');
-    const fence = new THREE.Color('#fbf7ee');
+    const soil = new THREE.Color('#8a6a4a');
+    const fence = new THREE.Color('#d8d2c4');
     const sign = new THREE.Color('#e8743b');
     for (const lot of world.vacantLots) {
       const ring = lot.outer!;
@@ -244,10 +255,10 @@ export class CityView {
   /** escreve todos os prédios do chunk; retorna malhas por material + spans */
   private buildBuildings(chunk: Chunk, detail: 'high' | 'low') {
     const ws = createWriters();
-    const spans: Record<WriterKey, Span[]> = { walls: [], detail: [] };
+    const spans: Record<WriterKey, Span[]> = { walls: [], detail: [], signs: [] };
     for (const b of chunk.buildings) {
       const before = WRITER_KEYS.map((k) => ws[k].vertexCount);
-      writeBuilding(ws, b, this.world.height, detail, detail === 'high' ? this.frontTest : undefined);
+      writeBuilding(ws, b, this.world.height, detail, detail === 'high' ? this.frontTest : undefined, this.signs);
       WRITER_KEYS.forEach((k, i) => {
         const count = ws[k].vertexCount - before[i];
         if (count) spans[k].push({ building: b, start: before[i], count });
@@ -301,6 +312,25 @@ export class CityView {
       chunk.group.add(m);
     }
 
+    // ---- quintais (muro, portão, grama/piso, piscina)
+    if (chunk.lots.length) {
+      const yw = { grass: new GeometryWriter(), detail: new GeometryWriter(), pool: new GeometryWriter() };
+      const dist = (x: number, z: number) => this.world.distanceToStreet(x, z, 40);
+      for (const l of chunk.lots) writeYard(yw, l, l.buildingId ? this.world.buildingsById.get(l.buildingId) : undefined, hf, dist);
+      if (yw.grass.vertexCount) {
+        const m = new THREE.Mesh(yw.grass.toGeometry(), this.areaMaterial);
+        m.receiveShadow = true;
+        chunk.group.add(m);
+      }
+      if (yw.detail.vertexCount) {
+        const m = new THREE.Mesh(yw.detail.toGeometry(), this.materials.detail);
+        // muros baixos: recebem sombra mas não projetam (passe de sombra mais leve)
+        m.receiveShadow = true;
+        chunk.group.add(m);
+      }
+      if (yw.pool.vertexCount) chunk.group.add(new THREE.Mesh(yw.pool.toGeometry(), this.poolMaterial));
+    }
+
     // ---- áreas verdes (grama texturizada, tom pelo vertex color)
     const areas = new GeometryWriter();
     for (const g of chunk.greens) {
@@ -340,10 +370,14 @@ export class CityView {
   buildingGeometry(b: Building): THREE.BufferGeometry {
     const ws = createWriters();
     writeBuilding(ws, b, this.world.height, 'high');
-    const all = new GeometryWriter();
-    for (const k of WRITER_KEYS) all.pos.push(...ws[k].pos);
+    // só posições, expandidas pelos índices (contorno/destaque)
+    const pos: number[] = [];
+    for (const k of WRITER_KEYS) {
+      const w = ws[k];
+      for (const i of w.idx) pos.push(w.pos[i * 3], w.pos[i * 3 + 1], w.pos[i * 3 + 2]);
+    }
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(all.pos, 3));
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     return g;
   }
 
@@ -369,8 +403,8 @@ function createWaterMaterial(extra: THREE.MeshStandardMaterialParameters): THREE
 float along = vFlow.w < 0.0 ? vFlow.x : vWPos.x * 0.7 + vWPos.z * 0.3;
 float across = vFlow.w < 0.0 ? vFlow.y : vWPos.z * 0.05;
 float edge = vFlow.w < 0.0 ? smoothstep(0.0, 0.2, min(vFlow.y, 1.0 - vFlow.y)) : 1.0;
-// água estilizada: turquesa no centro, clara nas bordas
-diffuseColor.rgb = mix(vec3(0.55, 0.8, 0.85), vec3(0.12, 0.5, 0.68), edge);`,
+// água do rio: margem barrenta, centro verde-azulado escuro
+diffuseColor.rgb = mix(vec3(0.36, 0.33, 0.25), vec3(0.08, 0.16, 0.17), edge);`,
       )
       .replace(
         '#include <normal_fragment_maps>',

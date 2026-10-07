@@ -14,8 +14,8 @@ npm install
 npm run dev
 ```
 
-Abra http://localhost:5173. O JSON da cidade (`public/data/itabirito.json`) e o
-HDRI CC0 de iluminação (`public/assets/`) já vêm versionados, então não é
+Abra http://localhost:5173. O JSON da cidade (`public/data/itabirito.json`) e as
+texturas/HDRI CC0 (`public/assets/`, ~5 MB) já vêm versionados, então não é
 preciso baixar nada para começar.
 
 Outros scripts:
@@ -23,7 +23,7 @@ Outros scripts:
 | comando | o que faz |
 | --- | --- |
 | `npm run fetch-osm` | baixa OSM (Overpass) + relevo e regenera `public/data/itabirito.json` |
-| `npm run fetch-assets` | baixa o HDRI CC0 (iluminação) do Poly Haven para `public/assets/` (`-- --textures` baixa também texturas PBR) |
+| `npm run fetch-assets` | baixa texturas PBR + HDRI CC0 do Poly Haven, reduz para 512 px e gera `public/assets/manifest.json` |
 | `npm run build` | typecheck + build de produção em `dist/` |
 | `npm run preview` | serve o build de produção |
 | `npm run typecheck` | só o TypeScript |
@@ -44,34 +44,34 @@ O menu (☰ ou relógio) permite fixar/acelerar a hora, escolher a **qualidade g
 ligar o **efeito maquete (tilt-shift)**, desligar sombras, mostrar FPS e ajustar o
 movimento nas ruas.
 
-## Visual (estilo diorama)
+## Visual (realista, estilo city builder)
 
-Inspirado em cidades-maquete: formas limpas com cantos chanfrados, cores pastel,
-sombras suaves + oclusão de ambiente (SSAO) e peças geométricas de "brinquedo".
+**Materiais**: atlas de 14 texturas PBR CC0 (reboco, tijolo vermelho e amarelo,
+concreto, painéis pré-moldados, revestimento cerâmico, chapa metálica, madeira,
+telhas cerâmica/cinza/ardósia, laje, telha metálica, piso) num único
+`DataArrayTexture`: cada vértice escolhe a camada, então **um material/uma draw
+call** cobre todos os prédios do chunk. Normal maps por derivadas (sem tangentes).
 
-**Cada prédio é classificado** (`Building.category`) no pré-processamento por
-tags OSM, estabelecimentos (POIs) dentro dele e zona de uso do solo (`landuse`):
+**Janelas com interior falso** (*interior mapping*): atrás do vidro há um cômodo
+com paralaxe real — paredes, piso, teto, quadro/sofá e persianas variando por
+janela; à noite parte dos cômodos acende. Nenhuma geometria extra.
 
-| uso | visual |
+**Arquétipos** (`Building.category` vem do pré-processamento: tags OSM, POIs e
+`landuse`). Cada tipo varia material, cor, telhado, número de vãos e peças:
+
+| uso | arquétipos |
 | --- | --- |
-| Residencial (casas) | paredes pastel, telhado laranja de 2/4 águas com beiral, chaminé, porta com marquise, venezianas coloridas, floreiras, sacadas; lajes com jardim na cobertura |
-| Residencial (prédios) | torres de maquete com faixas de laje, sacadas com guarda-corpo, casa de máquinas, caixa-d'água |
-| Comercial | térreo com vitrine, **toldos listrados** por vão e letreiro, ar-condicionado na laje |
-| Industrial | galpões com **telhado dente-de-serra**, portões de enrolar, chaminé listrada, tanques |
-| Institucional | janelas grandes, faixas de laje, marquise de entrada, mastro com bandeira |
-| Religioso | igreja barroca com torres, cúpulas e cruz |
+| Residencial | casa colonial mineira (reboco pastel, telha cerâmica, venezianas, barrado) · casa moderna (laje, platibanda, janelões) · sobrado de tijolo (verga de pedra, ardósia, chaminé) · casa térrea simples · prédio baixo · bloco de apartamentos tipo BNH (painéis, sacadas em grade) · edifício de tijolo (cornija) · edifício moderno (revestimento, sacadas de vidro) |
+| Comercial | sobrado comercial de tijolo e loja de rua (vitrines, toldos lisos/listrados, **letreiro com o nome real do estabelecimento**) · supermercado/loja grande (fachada cega, letreiro grande, telha metálica, dutos) · edifício de escritórios (cortina de vidro, embasamento) |
+| Industrial | galpão metálico · fábrica de tijolo (dente-de-serra, chaminé, tanques, marquise de carga) |
+| Institucional / religioso | prédio público com mastro · igreja barroca |
 
-As janelas são desenhadas no shader com o mesmo layout (vãos fixos centralizados
-por parede) usado para posicionar toldos, sacadas e floreiras — por isso as peças
-caem exatamente nos vãos. À noite as janelas acendem como numa maquete iluminada.
+**Outdoors** em coberturas de comércio e torres; letreiros e outdoors acendem à noite.
 
-**Árvores em todo terreno livre**: tudo dentro da cidade que não é prédio (com
-recuo), rua/calçada, água ou **lote vago reservado** recebe árvores estilizadas
-(copas redondas, pinheiros, ipês amarelos/rosas, palmeiras), em manchas.
-
-**Lotes vagos reservados** (~270): terrenos sem construção gerados junto com o
-preenchimento das quadras (`Lot.vacant`, `buildingId: null`), com cerca e placa;
-clicáveis — base do mercado imobiliário do próximo módulo.
+**Lotes com quintal** (~1.700): o preenchimento procedural gera lotes mais fundos
+que a casa; o quintal ganha **muro** nas divisas, **mureta com portão** na frente,
+grama ou piso e, em parte deles, **piscina** e árvore. Árvores de rua e de
+terreno livre não invadem lotes (nem os ~290 **terrenos vagos reservados**).
 
 | qualidade | para | o que muda |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ clicáveis — base do mercado imobiliário do próximo módulo.
 | Média | celular bom / notebook fraco | sem SSAO, bloom, LOD a 520 m |
 | Baixa | celular simples | sem pós-processamento, sombras 1024, menos árvores/NPCs |
 
-"Automática" escolhe pelo dispositivo. Em tempo real, a **resolução dinâmica**
+"Automática" escolhe pela GPU (dedicada = alta; integrada Intel/AMD/celular = média ou baixa). Em tempo real, a **resolução dinâmica**
 reduz o pixel ratio se o frame passar de ~21 ms; se ainda assim ficar lento, a
 **qualidade adaptativa** desliga SSAO e depois bloom.
 
@@ -178,7 +178,7 @@ Dicas:
   [Open Database License (ODbL)](https://www.openstreetmap.org/copyright).
   O arquivo `public/data/itabirito.json` é um banco de dados derivado do OSM e,
   portanto, também está sob a ODbL.
-- HDRI de iluminação: **[Poly Haven](https://polyhaven.com)** — CC0 (domínio público);
+- Texturas PBR e HDRI: **[Poly Haven](https://polyhaven.com)** — CC0 (domínio público);
   lista e autores em `public/assets/manifest.json`.
 - Relevo: tiles **Terrarium** (Mapzen / Tilezen, via AWS Open Data), derivados de
   SRTM (NASA) e outras fontes — ver

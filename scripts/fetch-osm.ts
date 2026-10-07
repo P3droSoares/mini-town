@@ -716,6 +716,8 @@ async function main() {
   // ---- preenchimento procedural das quadras sem prédios mapeados
   const osmCount = buildings.length;
   const vacantLots: Lot[] = [];
+  /** lotes com quintal (procedurais): lotId -> polígono do lote */
+  const lotOuters = new Map<string, Ring>();
   if (!CONFIG.noInfill) {
     const houses = generateInfill({
       streets,
@@ -746,6 +748,7 @@ async function main() {
         });
         continue;
       }
+      if (h.lotOuter) lotOuters.set(h.lotId, h.lotOuter);
       const inside = pois.filter((p) => !usedPois.has(p.osmId) && pointInPolygon(p.x, p.z, h.outer));
       inside.forEach((p) => usedPois.add(p.osmId));
       buildings.push({
@@ -772,7 +775,8 @@ async function main() {
   const lots: Lot[] = buildings.map((b) => ({
     lotId: b.lotId,
     buildingId: b.id,
-    area: b.area,
+    ...(lotOuters.has(b.lotId) ? { outer: lotOuters.get(b.lotId) } : {}),
+    area: lotOuters.has(b.lotId) ? round1(polygonArea(lotOuters.get(b.lotId)!)) : b.area,
     centroid: b.centroid,
     ...(b.address ? { address: b.address } : {}),
     ownerId: null,

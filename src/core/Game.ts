@@ -79,7 +79,7 @@ export class Game {
     // atualização manual: só quando algo relevante muda (ver updateShadowCamera)
     r.shadowMap.autoUpdate = false;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 0.8;
+    r.toneMappingExposure = 0.9;
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer = r;
 
@@ -116,8 +116,6 @@ export class Game {
     this.textures = new TextureLibrary(this.renderer, import.meta.env.BASE_URL, {
       normalMaps: this.quality.normalMaps,
       anisotropy: Math.min(this.quality.anisotropy, this.renderer.capabilities.getMaxAnisotropy()),
-      // estilo diorama: cores sólidas; só o HDRI (iluminação de ambiente) é usado
-      hdriOnly: true,
     });
     await this.textures.load((f) => report(f * 0.1, 'Carregando texturas…'));
     this.scene.environment = this.textures.envMap;

@@ -20,6 +20,8 @@ export interface GeneratedHouse {
   type: string;
   /** terreno vago reservado (sem construção) */
   vacant?: boolean;
+  /** polígono do lote (casa + quintal); ausente = lote igual ao prédio */
+  lotOuter?: Ring;
 }
 
 interface Obstacle {
@@ -209,6 +211,16 @@ export function generateInfill(opts: {
             if (area2 < 0) ring = ring.reverse();
             ok = depth * 0.6 > 6 && clearOfLines(ring) && clearOfPolys(ring);
           }
+          // quintal nos fundos (casas): lote mais fundo que a construção
+          let lotRing: Ring | undefined;
+          const houseLike = !industrial && !(Math.hypot(fx, fz) < opts.downtownRadius && s.width >= 7);
+          if (ok && houseLike) {
+            const yard = 4 + rng() * 9;
+            const curDepth = Math.max(...ring.map(([x, z]) => (x - fx) * nx + (z - fz) * nz));
+            let lr: Ring = [p(-hw - gap / 2, 0), p(hw + gap / 2, 0), p(hw + gap / 2, curDepth + yard), p(-hw - gap / 2, curDepth + yard)];
+            if (area2 < 0) lr = lr.reverse();
+            if (lr.every(([x, z]) => Math.abs(x) < half - 2 && Math.abs(z) < half - 2) && clearOfLines(lr) && clearOfPolys(lr)) lotRing = lr;
+          }
           if (ok) {
             const dist = Math.hypot(fx, fz);
             const downtown = dist < opts.downtownRadius;
@@ -234,9 +246,11 @@ export function generateInfill(opts: {
               levels: vacant ? 0 : levels,
               type,
               ...(vacant ? { vacant: true } : {}),
+              ...(lotRing ? { lotOuter: lotRing } : {}),
             });
-            const rb = ringBounds(ring);
-            polys.insert({ ring, bounds: rb }, rb.minX, rb.minZ, rb.maxX, rb.maxZ);
+            const occupied = lotRing ?? ring;
+            const rb = ringBounds(occupied);
+            polys.insert({ ring: occupied, bounds: rb }, rb.minX, rb.minZ, rb.maxX, rb.maxZ);
             idx++;
           }
           t += w;
