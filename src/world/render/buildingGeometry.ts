@@ -898,6 +898,13 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
       wallC = pick(PAL.plasterShop, rng());
       roof = levels === 1 && rng() < 0.25 && rect.hw < 12 ? 'gable' : 'flat';
       roofLayer = Layer.roofClay;
+      // sobrados comerciais: telhado de metal escondido atrás da platibanda é comum,
+      // mas parte mostra 4 águas marrom
+      if (roof === 'flat' && levels >= 2 && levels <= 3 && rng() < 0.35) {
+        roof = 'hip';
+        roofLayer = Layer.roofMetal;
+        roofC = pick([C('#7a4a3a'), C('#6e5040'), C('#835844')], rng());
+      }
       break;
     case 'supermercado':
       style = FacadeStyle.commercial;
@@ -980,7 +987,7 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
   const d = ws.detail;
 
   // ---- telhado
-  if (roof === 'hip' || roof === 'gable') pitchedRoof(d, rect, top, roofC, wallC, wallLayer, roofLayer, roof === 'hip', arch === 'galpao-metalico' || arch === 'fabrica-tijolo' ? 0.22 : arch === 'predio-baixo' ? 0.32 : 0.5, detail === 'high');
+  if (roof === 'hip' || roof === 'gable') pitchedRoof(d, rect, top, roofC, wallC, wallLayer, roofLayer, roof === 'hip', arch === 'galpao-metalico' || arch === 'fabrica-tijolo' ? 0.22 : arch === 'predio-baixo' || arch === 'loja-reboco' ? 0.32 : 0.5, detail === 'high');
   else if (roof === 'saw' && detail === 'high') {
     sawtoothRoof(d, rect, top, roofC, roofLayer);
     cap(d, ring, top - 0.02, roofC, roofLayer);
