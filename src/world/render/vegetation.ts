@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { worldUniforms } from './materials';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { QualityPreset } from '../../core/quality';
 import type { GreenKind, Ring } from '../../data/types';
@@ -590,6 +591,32 @@ function impostorTexture(leaf: THREE.Texture, kind: Species, crownBottom: number
   return t;
 }
 
+/**
+ * Folhagem: luz envolvente (wrap) + translucidez. Folha real deixa passar luz;
+ * sem isso o lado da copa oposto ao sol vira um borrão escuro e chapado.
+ */
+function foliageShading(m: THREE.Material, strength = 1) {
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uSunDirW = worldUniforms.uSunDirW;
+    sh.uniforms.uSunCol = worldUniforms.uSunCol;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirW;\nuniform vec3 uSunCol;')
+      .replace(
+        '#include <lights_fragment_end>',
+        `#include <lights_fragment_end>
+        {
+          vec3 sv = normalize((viewMatrix * vec4(uSunDirW, 0.0)).xyz);
+          vec3 toFrag = -normalize(vViewPosition);
+          float back = pow(max(dot(toFrag, sv), 0.0), 3.0);
+          float wrap = clamp((dot(normal, sv) + 0.6) / 1.6, 0.0, 1.0);
+          vec3 leafT = diffuseColor.rgb * vec3(1.0, 1.08, 0.7);
+          reflectedLight.indirectDiffuse += leafT * uSunCol * (0.11 * wrap + 0.3 * back + 0.03) * ${strength.toFixed(2)};
+        }`,
+      );
+  };
+  m.customProgramCacheKey = () => `foliage${strength}`;
+}
+
 interface SpeciesRender {
   geo: SpeciesGeo;
   proxy: THREE.BufferGeometry;
@@ -620,6 +647,7 @@ export class TreeRenderer {
     for (const f of ['broad', 'palm', 'euca'] as const) {
       leafTex[f] = foliageTexture(f);
       this.leafMats[f] = new THREE.MeshStandardMaterial({ map: leafTex[f], alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.85, metalness: 0 });
+      foliageShading(this.leafMats[f]);
     }
     this.species = [Species.Broadleaf, Species.Ipe, Species.Palm, Species.Eucalyptus].map((k) => {
       const geo = speciesGeometry(k, quality.leafCards);
@@ -638,6 +666,7 @@ export class TreeRenderer {
         side: THREE.DoubleSide,
         roughness: 0.9,
       });
+      foliageShading(impostorMat, 0.8);
       return { geo, proxy, impostor: impostorGeometry(width, height, center.y, k === Species.Palm), impostorMat };
     });
   }

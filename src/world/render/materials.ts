@@ -6,6 +6,9 @@ export const worldUniforms = {
   uNight: { value: 0 },
   uLitRatio: { value: 0.5 },
   uTime: { value: 0 },
+  /** direção (mundo) para o sol/lua e cor x intensidade da luz direta */
+  uSunDirW: { value: new THREE.Vector3(0, 1, 0) },
+  uSunCol: { value: new THREE.Color(1, 1, 1) },
 };
 
 /** camadas do atlas que recebem a cor do vértice (paredes pintadas etc.) */

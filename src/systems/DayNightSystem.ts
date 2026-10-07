@@ -146,6 +146,8 @@ export class DayNightSystem implements System {
     const lit = h >= 17 || h < 1 ? 0.6 : h < 5 ? 0.18 : h < 8 ? 0.35 : 0.4;
     worldUniforms.uNight.value = this.night;
     worldUniforms.uLitRatio.value = lit;
+    worldUniforms.uSunDirW.value.copy(game.sunDir);
+    worldUniforms.uSunCol.value.copy(light.color).multiplyScalar(light.intensity);
     game.view.streetLights?.setNight(this.night);
   }
 }
