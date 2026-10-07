@@ -47,7 +47,7 @@ if (vFacade.w > 0.0) {
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.20, 0.26, 0.32), glass * 0.9);
   float h = hash21(id + vec2(vFacade.w * 97.0, vFacade.w * 31.0));
   float lit = glass * step(1.0 - uLitRatio, h) * uNight;
-  totalEmissiveRadiance += lit * mix(vec3(1.0, 0.72, 0.38), vec3(1.0, 0.92, 0.72), fract(h * 7.0)) * 1.4;
+  totalEmissiveRadiance += lit * mix(vec3(1.0, 0.55, 0.2), vec3(1.0, 0.78, 0.45), fract(h * 7.0)) * 0.95;
 }`,
       );
   };

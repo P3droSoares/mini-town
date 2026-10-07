@@ -473,6 +473,15 @@ button {
   width: 100%;
   accent-color: var(--accent);
 }
+.menu select {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+}
 .menu input[type='checkbox'] {
   width: 18px;
   height: 18px;
