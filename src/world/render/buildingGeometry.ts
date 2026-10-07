@@ -107,9 +107,9 @@ export const ARCHETYPE_LABEL: Record<Archetype, string> = {
 
 const C = (h: string) => new THREE.Color(h);
 const PAL = {
-  colonial: ['#f4efe4', '#f2e2b8', '#e9d8a6', '#dfe8ec', '#cfe0e8', '#f1d9cf', '#f6f1ea', '#efd9a6', '#e2c9a6', '#dfe6d3'].map(C),
+  colonial: ['#e6dccb', '#dccb9e', '#d2c08e', '#cfd3cf', '#bfc9c9', '#dbc4b6', '#ebe4d6', '#d6bd8c', '#c9b28f', '#cbd0bd', '#b9a58a', '#d8d2c2'].map(C),
   modern: ['#f5f5f2', '#e6e6e3', '#d5d6d6', '#efe9df', '#c9cbcc', '#3d4045'].map(C),
-  plasterShop: ['#f1ece2', '#e4e1da', '#f0e3c4', '#d8e2e6', '#e9d5c5', '#dde7d8', '#f5d7c4'].map(C),
+  plasterShop: ['#e3ddd2', '#d4d0c8', '#ddd0b0', '#c9d1d4', '#d8c4b4', '#cbd3c4', '#e0c4ae', '#bfb7a8'].map(C),
   slab: ['#efebe3', '#e6e2d8', '#ddd9cf', '#f2efe8', '#e9e2d0'].map(C),
   towerGrey: ['#c9ccd0', '#b7bcc2', '#d6d3cc', '#a9afb5', '#e1ddd5'].map(C),
   institutional: ['#f4efe6', '#eef2f6', '#f6eadf', '#e8e4dc'].map(C),
@@ -824,7 +824,8 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
   let trim = pick(PAL.trims, rng());
   let roof: 'hip' | 'gable' | 'flat' | 'saw' = 'flat';
   let roofLayer: number = Layer.roofConcrete;
-  let roofC = pick(PAL.natural, rng());
+  // lajes de concreto envelhecido (cinza-amarronzado)
+  let roofC = pick([C('#8f8b83'), C('#827e77'), C('#9a958b'), C('#7a776f'), C('#a09b90')], rng());
   let roofBand = false;
   switch (arch) {
     case 'colonial':
@@ -894,6 +895,7 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
       wallLayer = rng() < 0.5 ? Layer.tiles : Layer.concrete;
       wallC = pick(PAL.plasterShop, rng());
       roofLayer = Layer.roofMetal;
+      roofC = pick([C('#7a4a3a'), C('#6e5040'), C('#8a5a44')], rng());
       roofBand = true;
       break;
     case 'escritorios':

@@ -106,7 +106,8 @@ export function buildTerrainMesh(hf: HeightField, data: CityData, tex: TextureLi
       const slope = hf.slope(sx, sz);
       // manchas de terra exposta (barrancos, lotes vagos) + encostas íngremes
       const patch = Math.sin(x * 0.021 + Math.sin(z * 0.013) * 2.0) * Math.cos(z * 0.017 - x * 0.006) + Math.sin((x - z) * 0.047) * 0.35;
-      const soilW = THREE.MathUtils.smoothstep(slope, 0.22, 0.5) * 0.9 + THREE.MathUtils.smoothstep(patch, 0.75, 1.05) * 0.6;
+      // terra exposta só em barrancos bem íngremes (morros cobertos de mata)
+      const soilW = THREE.MathUtils.smoothstep(slope, 0.42, 0.7) * 0.7 + THREE.MathUtils.smoothstep(patch, 1.0, 1.25) * 0.25;
       const dx = Math.max(b.minX - x, 0, x - b.maxX);
       const dz = Math.max(b.minZ - z, 0, z - b.maxZ);
       const urban = 1 - THREE.MathUtils.smoothstep(Math.hypot(dx, dz), 0, 160);

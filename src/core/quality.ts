@@ -51,7 +51,7 @@ export const PRESETS: Record<QualityLevel, QualityPreset> = {
     shadowMap: 2048,
     normalMaps: true,
     anisotropy: 4,
-    ssao: false,
+    ssao: true,
     bloom: true,
     godrays: true,
     pcss: false,

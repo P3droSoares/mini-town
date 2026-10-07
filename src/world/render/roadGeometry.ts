@@ -308,9 +308,24 @@ export function writeStreet(asphalt: GeometryWriter, walk: GeometryWriter, s: St
 }
 
 /** Rio/córrego: margem + lâmina d'água (com coordenada de fluxo para animação). */
-export function writeWaterLine(water: GeometryWriter, bank: GeometryWriter, wl: WaterLine, hf: HeightField) {
+export function writeWaterLine(water: GeometryWriter, bank: GeometryWriter, wl: WaterLine, hf: HeightField, walls?: GeometryWriter, inTown?: (x: number, z: number) => boolean) {
   const pts = densify(wl.points, 5);
   const width = Math.max(1.2, wl.width);
-  writeRibbon(bank, pts, width + 5, new THREE.Color('#7d7656'), (x, z) => hf.sample(x, z) + 0.04);
+  writeRibbon(bank, pts, width + 5, new THREE.Color('#5f5a44'), (x, z) => hf.sample(x, z) + 0.04);
   writeRibbon(water, pts, width, new THREE.Color(1, 1, 1), (x, z) => hf.sample(x, z) + 0.14, { offset: 0 });
+  // rio canalizado na área urbana: muretas de concreto + calçada de borda
+  if (!walls || wl.width < 6) return;
+  const runs = runsOutside(pts, [], (p) => !inTown || inTown(p[0], p[1]));
+  const concrete = new THREE.Color('#9b968a');
+  const top = (x: number, z: number) => hf.sample(x, z) + 1.0;
+  const bed = (x: number, z: number) => hf.sample(x, z) - 0.6;
+  for (const run of runs) {
+    for (const side of [1, -1] as const) {
+      const off = side * (width / 2 + 0.15);
+      writeSideWall(walls, run, off, bed, top, concrete, side === 1 ? -1 : 1); // face voltada para a água
+      writeSideWall(walls, run, side * (width / 2 + 0.45), (x, z) => hf.sample(x, z) - 0.2, top, concrete, side === 1 ? 1 : -1);
+      const a = side === 1 ? width / 2 + 0.15 : -width / 2 - 0.45;
+      writeStrip(walls, run, a, a + 0.3, new THREE.Color('#b8b3a7'), top);
+    }
+  }
 }

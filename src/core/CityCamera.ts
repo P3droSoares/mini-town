@@ -36,8 +36,9 @@ export class CityCamera {
 
   reset() {
     const y = this.world.height.sample(0, 0);
-    this.controls.target.set(0, y, 0);
-    this.camera.position.set(260, y + 300, 330);
+    // vista aérea oblíqua (~35°), olhando o centro e o rio
+    this.controls.target.set(-40, y, 40);
+    this.camera.position.set(-40 - 250, y + 300, 40 - 330);
     this.controls.update();
   }
 

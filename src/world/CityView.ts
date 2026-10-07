@@ -6,7 +6,6 @@ import type { WorldState } from './WorldState';
 import { GeometryWriter } from './render/GeometryWriter';
 import { writeDrapedPolygon } from './render/areaGeometry';
 import { type BuildingWriters, type FrontTest, WRITER_KEYS, type WindowInstance, type WriterKey, createWriters, writeBuilding } from './render/buildingGeometry';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createBuildingMaterial, createSignMaterial, createTexturedMaterial, worldUniforms } from './render/materials';
 import { SignAtlas } from './render/signAtlas';
 import { writeYard } from './render/yards';
@@ -175,7 +174,13 @@ export class CityView {
     // água (global, poucas feições)
     const water = new GeometryWriter();
     const bank = new GeometryWriter();
-    for (const wl of world.data.waterLines) writeWaterLine(water, bank, wl, hf);
+    const canal = new GeometryWriter();
+    for (const wl of world.data.waterLines) writeWaterLine(water, bank, wl, hf, canal, (x, z) => world.isInsideBounds(x, z, 30));
+    if (canal.vertexCount) {
+      const cm = new THREE.Mesh(canal.toGeometry(), this.walkMaterial);
+      cm.receiveShadow = cm.castShadow = true;
+      this.root.add(cm);
+    }
     for (const wa of world.data.waterAreas) {
       let minH = Infinity;
       for (const [x, z] of wa.outer) minH = Math.min(minH, hf.sample(x, z));
@@ -211,7 +216,7 @@ export class CityView {
     // terrenos vagos reservados: terra batida + cerca baixa + placa "à venda"
     const lotGround = new GeometryWriter();
     const lotProps = new GeometryWriter();
-    const soil = new THREE.Color('#8a6a4a');
+    const soil = new THREE.Color('#6f7448');
     const fence = new THREE.Color('#d8d2c4');
     const sign = new THREE.Color('#e8743b');
     for (const lot of world.vacantLots) {
@@ -395,15 +400,19 @@ export class CityView {
   update(dt: number, camera?: THREE.Camera) {
     worldUniforms.uTime.value += dt;
     if (camera) {
-      const lim = this.quality.level === 'high' ? 420 : 300;
-      for (const im of this.windowMeshes) im.visible = (im.userData.center as THREE.Vector3).distanceTo(camera.position) < lim;
+      // relevo das molduras só com a câmera baixa e perto (rua / zoom próximo);
+      // na vista aérea o shader já desenha a moldura e o custo seria alto
+      const ground = this.world.height.sample(camera.position.x, camera.position.z);
+      const low = camera.position.y - ground < 70;
+      const lim = this.quality.level === 'high' ? 200 : 140;
+      for (const im of this.windowMeshes) im.visible = low && (im.userData.center as THREE.Vector3).distanceTo(camera.position) < lim;
     }
   }
 }
 
 /** Água: lâmina reflexiva (IBL) com ondulação animada na normal. */
 function createWaterMaterial(extra: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: 0.06, metalness: 0.0, ...extra });
+  const m = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: 0.45, metalness: 0.0, ...extra });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = worldUniforms.uTime;
     shader.uniforms.uNight = worldUniforms.uNight;
@@ -419,7 +428,7 @@ float along = vFlow.w < 0.0 ? vFlow.x : vWPos.x * 0.7 + vWPos.z * 0.3;
 float across = vFlow.w < 0.0 ? vFlow.y : vWPos.z * 0.05;
 float edge = vFlow.w < 0.0 ? smoothstep(0.0, 0.2, min(vFlow.y, 1.0 - vFlow.y)) : 1.0;
 // água do rio: margem barrenta, centro verde-azulado escuro
-diffuseColor.rgb = mix(vec3(0.36, 0.33, 0.25), vec3(0.08, 0.16, 0.17), edge);`,
+diffuseColor.rgb = mix(vec3(0.2, 0.2, 0.15), vec3(0.05, 0.09, 0.09), edge);`,
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -447,20 +456,33 @@ diffuseColor.rgb = mix(vec3(0.36, 0.33, 0.25), vec3(0.08, 0.16, 0.17), edge);`,
  */
 function windowFrameGeometry(): THREE.BufferGeometry {
   const t = 0.08;
-  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number) =>
-    new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0).translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  const parts = [
-    box(-0.5, -0.5 + t, -0.5, 0.5, -0.02, 0.06),
-    box(0.5 - t, 0.5, -0.5, 0.5, -0.02, 0.06),
-    box(-0.5, 0.5, 0.5 - t, 0.5, -0.02, 0.06),
-    box(-0.5, 0.5, -0.5, -0.5 + t, -0.02, 0.06),
-    box(-0.025, 0.025, -0.5, 0.5, -0.01, 0.035),
-    box(-0.5, 0.5, 0.17, 0.21, -0.01, 0.035),
-    box(-0.6, 0.6, -0.57, -0.5, -0.02, 0.17),
-    box(-0.57, 0.57, 0.5, 0.57, -0.02, 0.1),
-  ].map((g) => g.toNonIndexed());
-  const g = mergeGeometries(parts)!;
-  g.deleteAttribute('uv');
+  const pos: number[] = [];
+  const nor: number[] = [];
+  // quad helper (normal constante)
+  const quad = (p: number[][], n: number[]) => {
+    for (const i of [0, 1, 2, 0, 2, 3]) {
+      pos.push(...p[i]);
+      nor.push(...n);
+    }
+  };
+  // caixa aberta atrás (encostada na parede): frente, topo, base, laterais
+  const box = (x0: number, x1: number, y0: number, y1: number, z1: number) => {
+    const z0 = 0;
+    quad([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], [0, 0, 1]);
+    quad([[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0]);
+    quad([[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], [0, -1, 0]);
+    quad([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], [-1, 0, 0]);
+    quad([[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], [1, 0, 0]);
+  };
+  box(-0.5, -0.5 + t, -0.5 + t, 0.5 - t, 0.06); // batente esq.
+  box(0.5 - t, 0.5, -0.5 + t, 0.5 - t, 0.06); // batente dir.
+  box(-0.5, 0.5, 0.5 - t, 0.5, 0.06); // verga
+  box(-0.025, 0.025, -0.5 + t, 0.5 - t, 0.035); // montante
+  box(-0.6, 0.6, -0.57, -0.5 + t, 0.17); // peitoril (inclui travessa inferior)
+  box(-0.57, 0.57, 0.5, 0.57, 0.1); // cimalha
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   return g;
 }
 
@@ -479,7 +501,7 @@ function buildWindowMesh(list: WindowInstance[], geo: THREE.BufferGeometry, mat:
     im.setMatrixAt(i, m);
     im.setColorAt(i, w.color);
   });
-  im.castShadow = true;
+  im.castShadow = false;
   im.receiveShadow = true;
   im.computeBoundingSphere();
   return im;

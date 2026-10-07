@@ -245,9 +245,9 @@ function speciesGeometry(kind: Species, cards: number): SpeciesGeo {
 const DENSITY: Partial<Record<GreenKind, number>> = {
   wood: 1 / 40,
   scrub: 1 / 120,
-  park: 1 / 110,
-  garden: 1 / 90,
-  grass: 1 / 260,
+  park: 1 / 45,
+  garden: 1 / 50,
+  grass: 1 / 120,
   meadow: 1 / 400,
   cemetery: 1 / 200,
 };
@@ -334,7 +334,7 @@ export function scatterTrees(world: WorldState, density: number): TreeInstance[]
   const add = (x: number, z: number, rng: () => number, kind: Species, scale = 1) => {
     out.push({ x, z, y: hf.sample(x, z) - 0.1, scale: scale * (0.75 + rng() * 0.5), rot: rng() * Math.PI * 2, kind, tint: rng() });
   };
-  const townSpecies = (r: number) => (r < 0.58 ? Species.Broadleaf : r < 0.82 ? Species.Eucalyptus : r < 0.92 ? Species.Ipe : Species.Palm);
+  const townSpecies = (r: number) => (r < 0.66 ? Species.Broadleaf : r < 0.76 ? Species.Eucalyptus : r < 0.8 ? Species.Ipe : Species.Palm);
 
   // 1) áreas verdes
   for (const g of world.data.greens) {
@@ -364,13 +364,13 @@ export function scatterTrees(world: WorldState, density: number): TreeInstance[]
       const ux = (bx - ax) / len;
       const uz = (bz - az) / len;
       for (let t = 6 + rng() * 10; t < len - 4; t += (14 + rng() * 18) / Math.max(0.3, factor)) {
-        if (rng() > 0.5) continue;
+        if (rng() > 0.75) continue;
         const side = rng() < 0.5 ? 1 : -1;
         const off = s.width / 2 + 1.25;
         const x = ax + ux * t - uz * off * side;
         const z = az + uz * t + ux * off * side;
         if (!world.isInsideBounds(x, z) || nearBuilding(x, z, 0.8)) continue;
-        add(x, z, rng, rng() < 0.2 ? Species.Ipe : Species.Broadleaf, 0.7);
+        add(x, z, rng, rng() < 0.35 ? Species.Palm : rng() < 0.15 ? Species.Ipe : Species.Broadleaf, 0.9);
       }
     }
   }
@@ -379,16 +379,17 @@ export function scatterTrees(world: WorldState, density: number): TreeInstance[]
   {
     const b = world.data.bounds;
     const rng = mulberry32(98765);
-    const spacing = 7.5 / Math.sqrt(Math.max(0.25, factor));
+    const spacing = 6 / Math.sqrt(Math.max(0.25, factor));
     for (let x = b.minX + 2; x < b.maxX - 2; x += spacing)
       for (let z = b.minZ + 2; z < b.maxZ - 2; z += spacing) {
         const px = x + (rng() - 0.5) * spacing * 0.9;
         const pz = z + (rng() - 0.5) * spacing * 0.9;
         // manchas (bosquinhos) e clareiras: não vira um tapete uniforme
         const noise = Math.sin(px * 0.031 + Math.sin(pz * 0.017) * 2) * Math.cos(pz * 0.027 - px * 0.009) + Math.sin((px - pz) * 0.06) * 0.3;
-        if (rng() > 0.5 + noise * 0.35) continue;
+        // mata densa com poucas clareiras
+        if (rng() > 0.72 + noise * 0.25) continue;
         if (onRoad(px, pz) || nearBuilding(px, pz, 2.5) || onWater(px, pz) || onVacant(px, pz) || inGreen(px, pz)) continue;
-        add(px, pz, rng, townSpecies(rng()), 0.9);
+        add(px, pz, rng, townSpecies(rng()), 1.5);
       }
   }
 
@@ -419,7 +420,7 @@ export function scatterTrees(world: WorldState, density: number): TreeInstance[]
   const hm = world.data.heightmap;
   const ext = hm ? hm.minX + (hm.size - 1) * hm.cellSize : b.maxX + 400;
   const rng = mulberry32(1234567);
-  const spacing = 12 / Math.sqrt(Math.max(0.2, factor));
+  const spacing = 9.5 / Math.sqrt(Math.max(0.2, factor));
   for (let x = -ext + 5; x < ext - 5; x += spacing)
     for (let z = -ext + 5; z < ext - 5; z += spacing) {
       const px = x + (rng() - 0.5) * spacing;
@@ -427,10 +428,11 @@ export function scatterTrees(world: WorldState, density: number): TreeInstance[]
       if (world.isInsideBounds(px, pz, -2)) continue;
       const noise = Math.sin(px * 0.013) * Math.cos(pz * 0.011) + Math.sin((px + pz) * 0.021) * 0.5;
       const slope = hf.slope(px, pz);
-      const p = (noise > 0.1 ? 0.6 : 0.15) + Math.min(slope, 0.4) * 0.6;
+      // morros cobertos de mata (como Itabirito e a referência)
+      const p = (noise > -0.4 ? 0.88 : 0.35) + Math.min(slope, 0.4) * 0.4;
       if (rng() > p) continue;
       if (onRoad(px, pz) || onWater(px, pz)) continue;
-      add(px, pz, rng, rng() < 0.45 ? Species.Eucalyptus : Species.Broadleaf, 1.2);
+      add(px, pz, rng, rng() < 0.15 ? Species.Eucalyptus : Species.Broadleaf, 2.1);
     }
   return out;
 }
@@ -438,10 +440,10 @@ export function scatterTrees(world: WorldState, density: number): TreeInstance[]
 // -------------------------------------------------------------- renderização
 
 const LEAF_TINTS: Record<Species, string[]> = {
-  [Species.Broadleaf]: ['#e8ffd8', '#ffffff', '#d4f0c0', '#f2ffe0', '#c8e6b0'],
+  [Species.Broadleaf]: ['#d4e0b0', '#c6d6a2', '#dde4ba', '#bccc98', '#cfd8a8', '#e4e8c0'],
   [Species.Ipe]: ['#ffd84a', '#ffcf2e', '#d98ad6', '#e7a6e0', '#ffe066'],
-  [Species.Palm]: ['#ffffff', '#e6f5d0'],
-  [Species.Eucalyptus]: ['#dfe8d6', '#cfdcc8', '#e9efe0'],
+  [Species.Palm]: ['#c6d0a8', '#b8c39a', '#d0d6b0'],
+  [Species.Eucalyptus]: ['#d6dcc4', '#c8d0b6', '#e0e4cc'],
 };
 
 
@@ -449,7 +451,7 @@ const LEAF_TINTS: Record<Species, string[]> = {
 export const SHADOW_ONLY_LAYER = 1;
 
 /** distância (m) da câmera ao centro da célula para trocar por impostores */
-const TREE_LOD_DISTANCE = 300;
+const TREE_LOD_DISTANCE = 170;
 
 /** impostor: 3 quads verticais cruzados com a silhueta da árvore */
 function impostorGeometry(width: number, height: number): THREE.BufferGeometry {
@@ -554,7 +556,7 @@ export class TreeRenderer {
       const bb = geo.leaves.boundingBox!;
       const size = bb.getSize(new THREE.Vector3());
       const center = bb.getCenter(new THREE.Vector3());
-      const proxy = new THREE.IcosahedronGeometry(0.5, 1)
+      const proxy = new THREE.IcosahedronGeometry(0.5, 0)
         .scale(size.x * 0.85, size.y * (k === Species.Palm ? 0.35 : 0.8), size.z * 0.85)
         .translate(center.x, center.y, center.z);
       const width = Math.max(size.x, size.z);
@@ -617,7 +619,8 @@ export class TreeRenderer {
           leaves.setColorAt(i, col);
           imp.setColorAt(i, col);
         });
-        trunk.castShadow = nearTown;
+        // tronco não projeta (a copa/proxy já dá a sombra): passe de sombra mais leve
+        trunk.castShadow = false;
         trunk.receiveShadow = true;
         // folhas não recebem sombra: o proxy da própria copa as escureceria
         leaves.receiveShadow = false;

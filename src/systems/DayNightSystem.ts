@@ -23,8 +23,8 @@ const KEYS: Key[] = [
   { elev: -8, top: '#16244a', horizon: '#3a3f63', sun: '#a9bcff', sunI: 0.5, hemiSky: '#5a6a9a', hemiGround: '#24242c', hemiI: 0.8 },
   { elev: -2, top: '#3a5488', horizon: '#e48a62', sun: '#ff9a5c', sunI: 0.4, hemiSky: '#8a8fb0', hemiGround: '#4a3a33', hemiI: 0.7 },
   { elev: 4, top: '#5e8cc4', horizon: '#f4b98c', sun: '#ffb27a', sunI: 1.3, hemiSky: '#b8c8e0', hemiGround: '#7a6650', hemiI: 0.9 },
-  { elev: 15, top: '#6a9fd2', horizon: '#d9e6ea', sun: '#ffe2b8', sunI: 2.2, hemiSky: '#cfe0f5', hemiGround: '#8a7a5a', hemiI: 1.05 },
-  { elev: 40, top: '#5f9bd6', horizon: '#cfe4ef', sun: '#fff6e8', sunI: 2.7, hemiSky: '#d4e8ff', hemiGround: '#8d7f60', hemiI: 1.15 },
+  { elev: 15, top: '#6a9fd2', horizon: '#d8dcd6', sun: '#ffcf96', sunI: 2.3, hemiSky: '#cfe0f5', hemiGround: '#8a7a5a', hemiI: 1.05 },
+  { elev: 40, top: '#5f9bd6', horizon: '#cfdde3', sun: '#ffe6c4', sunI: 2.7, hemiSky: '#d4e8ff', hemiGround: '#8d7f60', hemiI: 1.15 },
 ];
 
 const ca = new THREE.Color();
@@ -114,7 +114,7 @@ export class DayNightSystem implements System {
     const light = game.sun;
     lerpHex(k0.sun, k1.sun, t, light.color);
     // sol direto bem mais forte que o céu (contraste de sombra realista)
-    light.intensity = THREE.MathUtils.lerp(k0.sunI, k1.sunI, t) * 1.9;
+    light.intensity = THREE.MathUtils.lerp(k0.sunI, k1.sunI, t) * 2.15;
     if (sunUp) game.sunDir.copy(sunDir.y < 0.06 ? sunDir.setY(0.06).normalize() : sunDir);
     else game.sunDir.copy(moon);
 
@@ -123,7 +123,7 @@ export class DayNightSystem implements System {
     game.hemi.intensity = THREE.MathUtils.lerp(k0.hemiI, k1.hemiI, t);
     // com HDRI (IBL) a hemisférica vira só complemento; reflexos somem à noite
     game.hemi.intensity *= 0.35;
-    game.scene.environmentIntensity = THREE.MathUtils.lerp(0.42, 0.3, this.night);
+    game.scene.environmentIntensity = THREE.MathUtils.lerp(0.3, 0.3, this.night);
     // regenera o cubemap do céu quando o sol anda ~1° (ou a cada 30 s, nuvens)
     if (sunDir.distanceTo(this.lastEnvSun) > 0.018 || this.envAge > 30) {
       this.lastEnvSun.copy(sunDir);

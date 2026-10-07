@@ -101,7 +101,7 @@ async function boot() {
     loading.hide();
     console.info(`[boot] cidade pronta em ${Math.round(performance.now())} ms`);
     // acesso para depuração no console
-    Object.assign(window as object, { game, time, traffic, selection, panel });
+    Object.assign(window as object, { game, time, traffic, selection, panel, postfx });
   } catch (e) {
     console.error(e);
     loading.error((e as Error).message);

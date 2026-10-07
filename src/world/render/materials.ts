@@ -9,7 +9,7 @@ export const worldUniforms = {
 };
 
 /** camadas do atlas que recebem a cor do vértice (paredes pintadas etc.) */
-export const TINTABLE_LAYERS = [0, 3, 4, 7, 11, 13];
+export const TINTABLE_LAYERS = [0, 3, 4, 7, 11, 12, 13];
 
 /**
  * Material único dos prédios (paredes e peças):
@@ -26,6 +26,7 @@ varying vec4 vFacade;
 varying vec4 vStyle;
 varying vec4 vAux;
 varying vec2 vUvM;
+varying vec3 vWPos;
 uniform float uNight;
 uniform float uLitRatio;
 #ifdef USE_ATLAS
@@ -36,6 +37,9 @@ uniform float uLayerScale[${16}];
 uniform float uLayerTint[${16}];
 #endif
 float hash21(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p+45.32); return fract(p.x*p.y); }
+float vnoise2(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); vec2 u = f*f*(3.0-2.0*f);
+  return mix(mix(hash21(i), hash21(i+vec2(1,0)), u.x), mix(hash21(i+vec2(0,1)), hash21(i+vec2(1,1)), u.x), u.y); }
+float grime(vec3 p){ return vnoise2(p.xz * 0.11 + p.y * 0.21) * 0.6 + vnoise2(p.xz * 0.47 - p.y * 0.9) * 0.4; }
 vec2 rectSd(vec2 p, vec4 r){ vec2 d = min(p - r.xy, r.zw - p); float e = min(d.x, d.y); return vec2(step(0.0, e), e); }
 // base tangente (T, B, N) por derivadas para um par de coordenadas
 mat3 tbnOf(vec2 st, vec3 N) {
@@ -55,6 +59,16 @@ mat3 tbnOf(vec2 st, vec3 N) {
 
 const MAIN = /* glsl */ `
 vec3 geoN = normalize(nonPerturbedNormal);
+{
+  // desgaste: manchas grandes em tudo; lajes/telhados encardidos
+  vec3 wn = normalize(cross(dFdx(vWPos), dFdy(vWPos)));
+  float g = grime(vWPos);
+  diffuseColor.rgb *= 0.82 + 0.2 * g;
+  if (abs(wn.y) > 0.75) {
+    float st = smoothstep(0.25, 0.75, vnoise2(vWPos.xz * 0.35) * 0.7 + vnoise2(vWPos.xz * 1.7) * 0.3);
+    diffuseColor.rgb *= mix(0.6, 1.0, st);
+  }
+}
 #ifdef USE_ATLAS
 {
   float lay = vAux.w - 1.0;
@@ -195,6 +209,15 @@ if (vFacade.w > 0.0 && vAux.z > 0.5) {
     }
   }
 
+  // escorrimento sob os peitoris e da platibanda (fachadas envelhecidas)
+  if (glass < 0.5 && styleId != 6.0) {
+    float colN = hash21(vec2(floor(local * 3.0), seed * 11.0));
+    float inWinX = step(win.x - 0.05, lp.x) * step(lp.x, win.z + 0.05);
+    float below = clamp(1.0 - (win.y - lp.y) / 1.6, 0.0, 1.0) * step(lp.y, win.y);
+    float streak = inWinX * below * (0.35 + 0.65 * colN) * floorsOk;
+    float drip = smoothstep(topV - 3.2, topV - 0.2, v) * (0.4 + 0.6 * hash21(vec2(floor(local * 2.3), 7.0)));
+    diffuseColor.rgb *= 1.0 - 0.24 * streak - 0.16 * drip;
+  }
   // barrado das casas coloniais
   if (styleId == 0.0 && v < 0.7 && v > -1.5 && glass < 0.5 && !door) {
     diffuseColor.rgb = mix(diffuseColor.rgb, trim * 0.9, 0.8);
@@ -272,14 +295,17 @@ export function createBuildingMaterial(atlas: LayerAtlas | null): THREE.MeshStan
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute vec4 facade;\nattribute vec4 style;\nattribute vec4 aux;\nvarying vec4 vFacade;\nvarying vec4 vStyle;\nvarying vec4 vAux;\nvarying vec2 vUvM;',
+        '#include <common>\nattribute vec4 facade;\nattribute vec4 style;\nattribute vec4 aux;\nvarying vec4 vFacade;\nvarying vec4 vStyle;\nvarying vec4 vAux;\nvarying vec2 vUvM;\nvarying vec3 vWPos;',
       )
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFacade = facade;\nvStyle = style;\nvAux = aux;\nvUvM = uv;');
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvFacade = facade;\nvStyle = style;\nvAux = aux;\nvUvM = uv;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+      );
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${PARS}`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${MAIN}`);
   };
-  m.customProgramCacheKey = () => `building-v3-${!!atlas}`;
+  m.customProgramCacheKey = () => `building-v4-${!!atlas}`;
   return m;
 }
 

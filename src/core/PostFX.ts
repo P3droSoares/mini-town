@@ -19,6 +19,7 @@ import {
 } from 'postprocessing';
 import * as THREE from 'three';
 import { worldUniforms } from '../world/render/materials';
+import { GradeEffect } from './gradeEffect';
 import type { Game } from './Game';
 
 /**
@@ -36,6 +37,7 @@ export class PostFX {
   private ao: InstanceType<typeof N8AOPostPass> | null = null;
   private bloom: BloomEffect | null = null;
   private rays: GodRaysEffect | null = null;
+  private grade: GradeEffect | null = null;
   private sunMesh: THREE.Mesh;
   tiltShift = false;
 
@@ -96,7 +98,7 @@ export class PostFX {
       ao.configuration.intensity = 3.2;
       ao.configuration.halfRes = true;
       ao.configuration.gammaCorrection = false;
-      ao.setQualityMode('Medium');
+      ao.setQualityMode(quality.level === 'high' ? 'Medium' : 'Performance');
       c.addPass(ao as unknown as Pass);
       this.ao = ao;
     }
@@ -123,10 +125,13 @@ export class PostFX {
     }
     if (this.tiltShift) effects.push(new TiltShiftEffect({ offset: 0.0, rotation: 0, focusArea: 0.35, feather: 0.25, kernelSize: KernelSize.MEDIUM }));
     // gradação: um pouco mais de contraste/saturação, vinheta suave
-    effects.push(new HueSaturationEffect({ saturation: 0.12 }));
-    effects.push(new BrightnessContrastEffect({ contrast: 0.08 }));
-    effects.push(new VignetteEffect({ offset: 0.32, darkness: 0.45 }));
+    effects.push(new HueSaturationEffect({ saturation: 0.05 }));
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.AGX }));
+    // gradação depois do tone mapping (espaço de exibição)
+    this.grade = new GradeEffect({ warmth: 1, contrast: 0.4, greenDesat: 0.4 });
+    effects.push(this.grade);
+    effects.push(new BrightnessContrastEffect({ brightness: 0.03, contrast: 0.05 }));
+    effects.push(new VignetteEffect({ offset: 0.3, darkness: 0.5 }));
     c.addPass(new EffectPass(camera, ...effects));
     this.composer = c;
     this.resize();
@@ -149,6 +154,8 @@ export class PostFX {
       this.rays.godRaysMaterial.weight = day ? 0.35 * (1 - night) : 0;
     }
     if (this.bloom) this.bloom.intensity = 0.45 + night * 0.9;
+    // calor máximo perto do pôr do sol, neutro ao meio-dia, frio à noite
+    if (this.grade) this.grade.warmth = night > 0.5 ? -0.4 : 0.6 + (1 - Math.min(1, sunDir.y * 1.6)) * 0.8;
     if (this.ao) this.ao.configuration.intensity = 3.2 * (1 - night * 0.6);
     this.composer!.render();
   }
