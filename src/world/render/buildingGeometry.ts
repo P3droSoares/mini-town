@@ -5,6 +5,7 @@ import { hashId, mulberry32, polygonArea } from '../geo';
 import { GeometryWriter, UP } from './GeometryWriter';
 import type { SignAtlas } from './signAtlas';
 import { Layer } from './textures';
+import { SOFT } from './style';
 
 /**
  * Kit de prédios realistas por ARQUÉTIPO. Cada categoria (residencial,
@@ -260,6 +261,40 @@ function orientCCW(ring: Vec2[]): Vec2[] {
 }
 
 /** retângulo orientado (opcionalmente chanfrado) como anel CCW */
+/**
+ * Arredonda todos os cantos do anel (côncavos e convexos) com curvas
+ * quadráticas de raio ~r (limitado a 45% das arestas vizinhas).
+ */
+function filletRing(ring: Vec2[], r: number, seg = 3): Vec2[] {
+  const n = ring.length;
+  if (n < 3 || r <= 0.05) return ring;
+  const out: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = ring[i];
+    const a = ring[(i - 1 + n) % n];
+    const b = ring[(i + 1) % n];
+    const la = Math.hypot(a[0] - p[0], a[1] - p[1]);
+    const lb = Math.hypot(b[0] - p[0], b[1] - p[1]);
+    const ra = Math.min(r, la * 0.45);
+    const rb = Math.min(r, lb * 0.45);
+    if (la < 1e-6 || lb < 1e-6) continue;
+    const s0: Vec2 = [p[0] + ((a[0] - p[0]) / la) * ra, p[1] + ((a[1] - p[1]) / la) * ra];
+    const s1: Vec2 = [p[0] + ((b[0] - p[0]) / lb) * rb, p[1] + ((b[1] - p[1]) / lb) * rb];
+    // canto quase reto (colinear): mantém o vértice
+    const cross = (p[0] - a[0]) * (b[1] - p[1]) - (p[1] - a[1]) * (b[0] - p[0]);
+    if (Math.abs(cross) / (la * lb) < 0.05) {
+      out.push(p);
+      continue;
+    }
+    for (let k = 0; k <= seg; k++) {
+      const t = k / seg;
+      const u = 1 - t;
+      out.push([u * u * s0[0] + 2 * u * t * p[0] + t * t * s1[0], u * u * s0[1] + 2 * u * t * p[1] + t * t * s1[1]]);
+    }
+  }
+  return out;
+}
+
 function boxRing(r: OrientedRect, c = 0, hl = r.hl, hw = r.hw, offU = 0, offV = 0): Vec2[] {
   const vx = -r.uz;
   const vz = r.ux;
@@ -288,6 +323,21 @@ function writeWalls(ctx: Ctx, ring: Vec2[], y0: number, y1: number, color: THREE
   const out: WallLayout[] = [];
   const w = ctx.w.walls;
   const bay = BAY[ctx.style];
+  // normais por vértice: média das arestas vizinhas quando o canto é suave
+  // (cantos arredondados viram curva lisa; quinas de verdade continuam vivas)
+  const en = ring.map((a, i) => {
+    const b = ring[(i + 1) % ring.length];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return [(b[1] - a[1]) / len, -(b[0] - a[0]) / len] as [number, number];
+  });
+  const vn = (i: number, edge: number): THREE.Vector3 => {
+    const m = ring.length;
+    const other = en[edge === i ? (i - 1 + m) % m : (i + 0) % m];
+    const own = en[edge];
+    const dot = own[0] * other[0] + own[1] * other[1];
+    if (!SOFT || dot < 0.55) return V(own[0], 0, own[1]);
+    return V(own[0] + other[0], 0, own[1] + other[1]).normalize();
+  };
   w.layer = layer;
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];
@@ -314,6 +364,11 @@ function writeWalls(ctx: Ctx, ring: Vec2[], y0: number, y1: number, color: THREE
       [0, y0, len, y0, len, y1, 0, y1],
       [0, vb, ctx.topV, s, len, vb, ctx.topV, s, len, y1 - ctx.gMax, ctx.topV, s, 0, y1 - ctx.gMax, ctx.topV, s],
     );
+    if (SOFT) {
+      const na = vn(i, i);
+      const nb = vn((i + 1) % ring.length, i);
+      w.setLastQuadNormals(na, nb, nb, na);
+    }
     out.push(l);
   }
   w.wall = [0, 0, 0, 0];
@@ -981,6 +1036,8 @@ export function writeBuilding(ws: BuildingWriters, b: Building, hf: HeightField,
     porch = porchRing(rect, side, Math.min(rect.hl, 5.5), Math.min(2.4, rect.hw * 0.6));
     ring = porch.ring;
   } else ring = boxRing(rect, style === FacadeStyle.office || style === FacadeStyle.slab ? 0 : Math.min(0.3, rect.hw * 0.08));
+  // formas suaves: nenhum canto vivo no volume
+  if (SOFT && !roundTower) ring = filletRing(ring, housey || arch === 'sobrado-tijolo' ? 0.75 : Math.min(1.8, Math.max(0.6, rect.hw * 0.18)));
   let anyFront = false;
   const walls = writeWalls(ctx, ring, base, top, wallC, wallLayer, (l) => {
     const f = frontOf(l);

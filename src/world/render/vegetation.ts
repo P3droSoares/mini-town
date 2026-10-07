@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { worldUniforms } from './materials';
-import { LOWPOLY } from './style';
+import { LOWPOLY, SOFT } from './style';
 import { LOWPOLY_TINTS, type LowpolyTree, lowpolyTree } from './lowpolyTrees';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { QualityPreset } from '../../core/quality';
@@ -644,8 +644,8 @@ export class TreeRenderer {
   private proxyMat = new THREE.MeshBasicMaterial({ color: '#000000' });
   /** estilo low-poly: geometria perto/longe por espécie */
   private lowpoly: { near: LowpolyTree; far: LowpolyTree }[] = [];
-  private lpCrownMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85, metalness: 0 });
-  private lpTrunkMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95, metalness: 0 });
+  private lpCrownMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: !SOFT, roughness: 0.85, metalness: 0 });
+  private lpTrunkMat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: !SOFT, roughness: 0.95, metalness: 0 });
 
   constructor(
     tex: TextureLibrary,

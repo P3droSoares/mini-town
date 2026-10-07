@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { LOWPOLY } from './style';
+import { LOWPOLY, SOFT } from './style';
 import type { CityData } from '../../data/types';
 import type { HeightField } from '../HeightField';
 import { PALETTE } from './palette';
@@ -52,7 +52,7 @@ export function createGroundMaterial(tex: TextureLibrary, extra: THREE.MeshStand
 
 /** chão low-poly: cor chapada (vértice) + solo na cor média da textura, facetado */
 function lowpolyGround(tex: TextureLibrary, m: THREE.MeshStandardMaterial) {
-  m.flatShading = true;
+  m.flatShading = !SOFT;
   const soil = tex.get('soil');
   const soilC = soil ? new THREE.Color(soil.avg.r, soil.avg.g, soil.avg.b).multiplyScalar(1.35) : new THREE.Color('#9a5a3a');
   m.onBeforeCompile = (shader) => {

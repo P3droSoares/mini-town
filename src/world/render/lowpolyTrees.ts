@@ -1,16 +1,17 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../geo';
 import { Species } from './vegetation';
 
 /**
- * Árvores low-poly: copas de icosaedros "amassados" e cones, facetadas.
- * Cor de vértice = só luminosidade (base mais escura, topo claro, variação
- * por face); o tom (verde, ipê amarelo/rosa) vem da cor da instância.
- * `detail` 1 = perto, 0 = longe (20 faces por copa).
+ * Árvores estilizadas de formas suaves (sem quinas): copas em "nuvem" de
+ * esferas lisas levemente onduladas, tronco cônico, palmeira com tronco
+ * curvo e folhas arqueadas, cipreste em cone arredondado.
+ * Cor de vértice = luminosidade (base escura, topo claro); o tom vem da cor
+ * da instância. `detail` 1 = perto, 0 = longe.
  */
 export interface LowpolyTree {
-  /** tronco + copa numa geometria só (vertex color: tronco marrom fixo) */
+  /** tronco + copa numa geometria só (longe) */
   whole: THREE.BufferGeometry;
   /** só a copa (tingida por instância) */
   crown: THREE.BufferGeometry;
@@ -18,113 +19,184 @@ export interface LowpolyTree {
   trunk: THREE.BufferGeometry;
 }
 
-const TRUNK = new THREE.Color('#6b4a33');
+const TRUNK = new THREE.Color('#7a5638');
 
-/** icosaedro com vértices deslocados (mesma posição = mesmo deslocamento: sem rachaduras) */
-function blob(r: number, sx: number, sy: number, sz: number, detail: number, rng: () => number): THREE.BufferGeometry {
-  const g = new THREE.IcosahedronGeometry(r, detail);
-  const p = g.attributes.position as THREE.BufferAttribute;
-  const jit = new Map<string, [number, number, number]>();
-  for (let i = 0; i < p.count; i++) {
-    const key = `${p.getX(i).toFixed(3)},${p.getY(i).toFixed(3)},${p.getZ(i).toFixed(3)}`;
-    let j = jit.get(key);
-    if (!j) {
-      const k = 1 + (rng() - 0.5) * 0.28;
-      j = [k, k * (1 + (rng() - 0.5) * 0.1), k];
-      jit.set(key, j);
-    }
-    p.setXYZ(i, p.getX(i) * j[0] * sx, p.getY(i) * j[1] * sy, p.getZ(i) * j[2] * sz);
+/** prepara para mesclar: sem índice, sem uv, com cor */
+function flat(g: THREE.BufferGeometry, color?: THREE.Color): THREE.BufferGeometry {
+  const ng = g.index ? g.toNonIndexed() : g;
+  if (ng.attributes.uv) ng.deleteAttribute('uv');
+  if (color) {
+    const n = ng.attributes.position.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) col.set([color.r, color.g, color.b], i * 3);
+    ng.setAttribute('color', new THREE.BufferAttribute(col, 3));
   }
-  // base achatada: copa não termina em ponta embaixo
-  for (let i = 0; i < p.count; i++) if (p.getY(i) < -r * sy * 0.55) p.setY(i, -r * sy * 0.55);
+  return ng;
+}
+
+/** esfera lisa com ondulação suave (copa "fofa") */
+function puff(r: number, sx: number, sy: number, sz: number, detail: number, seed: number): THREE.BufferGeometry {
+  let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(r, detail ? 3 : 1);
+  g.deleteAttribute('normal');
+  g.deleteAttribute('uv');
+  g = mergeVertices(g);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const n = v.clone().normalize();
+    const wob = 1 + 0.07 * Math.sin(n.x * 5.1 + seed) * Math.cos(n.z * 4.3 - seed * 0.7) + 0.05 * Math.sin(n.y * 6.7 + seed * 1.3);
+    v.multiplyScalar(wob);
+    // base levemente achatada
+    if (v.y < -r * 0.45) v.y = -r * 0.45 + (v.y + r * 0.45) * 0.35;
+    p.setXYZ(i, v.x * sx, v.y * sy, v.z * sz);
+  }
+  g.computeVertexNormals();
   return g;
 }
 
-/** cor de vértice por face: claro em cima, escuro embaixo, ruído por face */
-function shadeCrown(g: THREE.BufferGeometry, yMin: number, yMax: number, rng: () => number) {
+/** luminosidade por vértice: base mais escura, topo claro */
+function shade(g: THREE.BufferGeometry, yMin: number, yMax: number) {
   const p = g.attributes.position as THREE.BufferAttribute;
   const col = new Float32Array(p.count * 3);
-  for (let i = 0; i < p.count; i += 3) {
-    const y = (p.getY(i) + p.getY(i + 1) + p.getY(i + 2)) / 3;
-    const t = THREE.MathUtils.clamp((y - yMin) / Math.max(0.01, yMax - yMin), 0, 1);
-    const v = (0.72 + 0.34 * t) * (0.93 + rng() * 0.14);
-    for (let k = 0; k < 3; k++) col.set([v, v, v], (i + k) * 3);
+  for (let i = 0; i < p.count; i++) {
+    const t = THREE.MathUtils.clamp((p.getY(i) - yMin) / Math.max(0.01, yMax - yMin), 0, 1);
+    const v = 0.68 + 0.4 * t * t * (3 - 2 * t);
+    col.set([v, v, v], i * 3);
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
 }
 
-function solid(g: THREE.BufferGeometry, c: THREE.Color): THREE.BufferGeometry {
-  const ng = g.index ? g.toNonIndexed() : g;
-  ng.deleteAttribute('uv');
-  const n = ng.attributes.position.count;
-  const col = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
-  ng.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  return ng;
+/** tronco cônico liso, opcionalmente curvo (tubo ao longo de uma curva) */
+function trunkTube(points: THREE.Vector3[], r0: number, r1: number, radial: number, segs: number): THREE.BufferGeometry {
+  const curve = new THREE.CatmullRomCurve3(points);
+  const g = new THREE.TubeGeometry(curve, segs, 1, radial, false);
+  // afina do pé ao topo
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const pts = curve.getSpacedPoints(segs);
+  for (let s = 0; s <= segs; s++) {
+    const r = r0 + (r1 - r0) * (s / segs);
+    const c = pts[s];
+    for (let k = 0; k <= radial; k++) {
+      const i = s * (radial + 1) + k;
+      p.setXYZ(i, c.x + (p.getX(i) - c.x) * r, c.y + (p.getY(i) - c.y) * r, c.z + (p.getZ(i) - c.z) * r);
+    }
+  }
+  g.computeVertexNormals();
+  return flat(g, TRUNK);
 }
 
-function trunkGeo(h: number, r0: number, r1: number, seg: number, lean = 0): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(r1, r0, h, seg, 1, true);
-  g.translate(0, h / 2 - 0.2, 0);
-  if (lean) g.applyMatrix4(new THREE.Matrix4().makeShear(0, 0, lean, 0, 0, 0));
-  return solid(g, TRUNK);
+/** folha de palmeira: fita arqueada, larga no meio, com as duas faces */
+function frond(len: number, width: number, droop: number, segs: number): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const x = t * len;
+    const y = Math.sin(t * Math.PI * 0.55) * len * 0.28 - t * t * droop;
+    const w = width * Math.sin(Math.PI * Math.min(1, t * 1.15)) * (1 - t * 0.3);
+    // leve "V" no meio da folha (vinco central)
+    pos.push(x, y, -w, x, y + w * 0.25, 0, x, y, w);
+  }
+  for (let i = 0; i < segs; i++) {
+    const a = i * 3;
+    const b = (i + 1) * 3;
+    for (const [p, q] of [
+      [0, 1],
+      [1, 2],
+    ]) {
+      idx.push(a + p, b + p, b + q, a + p, b + q, a + q);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // verso com vértices próprios (normais opostas)
+  const back = g.clone();
+  const bi = back.index!.array as Uint16Array | Uint32Array;
+  for (let i = 0; i < bi.length; i += 3) [bi[i + 1], bi[i + 2]] = [bi[i + 2], bi[i + 1]];
+  const bn = back.attributes.normal as THREE.BufferAttribute;
+  for (let i = 0; i < bn.count; i++) bn.setXYZ(i, -bn.getX(i), -bn.getY(i), -bn.getZ(i));
+  return mergeGeometries([g, back])!;
 }
 
-function prep(g: THREE.BufferGeometry): THREE.BufferGeometry {
-  const ng = g.index ? g.toNonIndexed() : g;
-  ng.deleteAttribute('uv');
-  return ng;
+/** cone arredondado em camadas (cipreste/pinheiro) por revolução */
+function roundCone(h: number, r: number, tiers: number, radial: number): THREE.BufferGeometry {
+  const prof: THREE.Vector2[] = [new THREE.Vector2(0.001, 0)];
+  for (let t = 0; t < tiers; t++) {
+    const y0 = (t / tiers) * h * 0.92;
+    const rr = r * (1 - (t / tiers) * 0.72);
+    const steps = 6;
+    for (let k = 0; k <= steps; k++) {
+      const a = (k / steps) * Math.PI;
+      // cada camada é um "pneu" arredondado que se afunila
+      prof.push(new THREE.Vector2(Math.max(0.05, rr * (0.55 + 0.45 * Math.sin(a))), y0 + (k / steps) * (h / tiers) * 1.1));
+    }
+  }
+  prof.push(new THREE.Vector2(0.001, h));
+  const g = new THREE.LatheGeometry(prof, radial);
+  g.deleteAttribute('uv');
+  g.deleteAttribute('normal');
+  const m = mergeVertices(g);
+  m.computeVertexNormals();
+  return m;
 }
 
 export function lowpolyTree(kind: Species, detail: 0 | 1): LowpolyTree {
-  const rng = mulberry32(500 + kind * 17 + detail);
-  const seg = detail ? 6 : 4;
+  const rng = mulberry32(900 + kind * 17 + detail);
+  const radial = detail ? 8 : 5;
   let trunk: THREE.BufferGeometry;
   const crowns: THREE.BufferGeometry[] = [];
+  const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
   if (kind === Species.Palm) {
-    // estilizada: tronco mais baixo e grosso, levemente curvo; leque cheio
-    trunk = trunkGeo(7.2, 0.36, 0.24, seg, 0.04);
+    trunk = trunkTube([V(0, -0.3, 0), V(0.15, 2.5, 0), V(0.55, 5, 0.1), V(0.9, 7.2, 0.15)], 0.32, 0.2, radial, detail ? 8 : 4);
+    const top = V(0.9, 7.2, 0.15);
     const n = detail ? 9 : 6;
     for (let i = 0; i < n; i++) {
-      const f = new THREE.ConeGeometry(0.85, 4.2, 3, 1);
-      f.scale(1, 1, 0.22);
-      f.translate(0, 2.1, 0);
-      f.rotateZ(-1.0 - rng() * 0.45);
-      f.rotateY((i / n) * Math.PI * 2 + rng() * 0.25);
-      f.translate(0.29, 7.0, 0);
-      crowns.push(prep(f));
+      const f = frond(4.2 + rng() * 0.8, 0.55, 1.6 + rng() * 0.8, detail ? 8 : 4);
+      f.rotateZ(0.15 + rng() * 0.25);
+      f.rotateY((i / n) * Math.PI * 2 + rng() * 0.3);
+      f.translate(top.x, top.y, top.z);
+      crowns.push(flat(f));
     }
-    crowns.push(prep(blob(0.75, 1, 0.9, 1, 0, rng).translate(0.29, 7.0, 0)));
+    crowns.push(flat(puff(0.6, 1, 0.8, 1, detail, 3).translate(top.x, top.y - 0.1, top.z)));
   } else if (kind === Species.Eucalyptus) {
-    trunk = trunkGeo(9.5, 0.26, 0.12, seg, 0.02);
-    crowns.push(prep(blob(1.9, 1, 1.7, 1, detail, rng).translate(0.2, 9.4, 0.1)));
-    if (detail) crowns.push(prep(blob(1.2, 1, 1.3, 1, 1, rng).translate(0.9, 7.4, 0.5)));
+    // cipreste: cone arredondado em camadas
+    trunk = trunkTube([V(0, -0.3, 0), V(0, 2.2, 0)], 0.24, 0.18, radial, 1);
+    crowns.push(flat(roundCone(8.5, 2.3, 4, detail ? 14 : 7).translate(0, 1.4, 0)));
+  } else if (kind === Species.Ipe) {
+    trunk = trunkTube([V(0, -0.3, 0), V(0.1, 2, 0), V(-0.1, 3.4, 0.1)], 0.26, 0.16, radial, detail ? 4 : 2);
+    crowns.push(flat(puff(2.6, 1.15, 0.78, 1.15, detail, 1.7).translate(0, 4.6, 0)));
+    crowns.push(flat(puff(1.5, 1, 0.85, 1, detail, 4.1).translate(1.2, 5.5, -0.6)));
   } else {
-    // copa larga (e ipê): 1 copa central + 2-3 menores em volta
-    trunk = trunkGeo(3.6, 0.28, 0.18, seg);
-    crowns.push(prep(blob(2.5, 1.05, 0.82, 1.05, detail, rng).translate(0, 4.9, 0)));
-    const extra = detail ? 3 : 1;
+    // copa larga: nuvem de 4-5 esferas lisas sobre tronco com galhos
+    trunk = mergeGeometries([
+      trunkTube([V(0, -0.3, 0), V(0.05, 1.8, 0), V(0, 3.4, 0)], 0.3, 0.17, radial, detail ? 3 : 1),
+      ...(detail ? [trunkTube([V(0, 2.4, 0), V(0.9, 3.4, 0.3), V(1.4, 4.1, 0.5)], 0.12, 0.06, 5, 3), trunkTube([V(0, 2.6, 0), V(-0.8, 3.6, -0.4), V(-1.3, 4.3, -0.6)], 0.11, 0.05, 5, 3)] : []),
+    ])!;
+    crowns.push(flat(puff(2.3, 1.05, 0.9, 1.05, detail, 0.3).translate(0, 5.0, 0)));
+    const extra = detail ? 4 : 2;
     for (let i = 0; i < extra; i++) {
-      const a = (i / extra) * Math.PI * 2 + rng();
-      crowns.push(prep(blob(1.5 + rng() * 0.4, 1, 0.85, 1, detail, rng).translate(Math.cos(a) * 1.9, 4.2 + rng() * 0.9, Math.sin(a) * 1.9)));
+      const a = (i / extra) * Math.PI * 2 + rng() * 0.6;
+      const rr = 1.5 + rng() * 0.4;
+      crowns.push(flat(puff(rr, 1, 0.88, 1, detail, i * 2.3 + 1).translate(Math.cos(a) * 1.75, 4.3 + rng() * 0.9, Math.sin(a) * 1.75)));
     }
   }
   const crown = mergeGeometries(crowns)!;
   crown.computeBoundingBox();
-  shadeCrown(crown, crown.boundingBox!.min.y, crown.boundingBox!.max.y, rng);
-  crown.computeVertexNormals();
-  trunk.computeVertexNormals();
+  shade(crown, crown.boundingBox!.min.y, crown.boundingBox!.max.y);
   return { whole: mergeGeometries([trunk, crown])!, crown, trunk };
 }
 
 /**
- * Tons por espécie, na ordem de Species (Broadleaf, Ipe, Palm, Eucalyptus).
+ * Tons por espécie, na ordem de Species (copa larga, ipê, palmeira, cipreste).
  * Índice numérico: evita depender do enum na carga do módulo (import circular).
  */
 export const LOWPOLY_TINTS: string[][] = [
-  ['#5f9a3c', '#6aa843', '#4f8c36', '#78b04a', '#58933a', '#86b84f'],
-  ['#f2c230', '#f5b82a', '#d877c8', '#e58fd2', '#f7d046'],
-  ['#6aa346', '#5c9640', '#76ae4c'],
-  ['#7ea05a', '#6f9452', '#89a866'],
+  ['#6aa843', '#78b34c', '#5c9a3c', '#86bd55', '#63a142', '#93c35e'],
+  ['#f4c43a', '#f7b833', '#e389d0', '#ee9fd9', '#f9d457', '#ffffff'],
+  ['#74ad4c', '#68a246', '#80b656'],
+  ['#4f8a46', '#5a944c', '#46803f'],
 ];

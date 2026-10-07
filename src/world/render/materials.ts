@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { LOWPOLY } from './style';
+import { LOWPOLY, SOFT } from './style';
 import type { LayerAtlas, TexKey, TextureLibrary } from './textures';
 
 /** Uniforms globais compartilhados (atualizados pelo ciclo dia/noite). */
@@ -310,7 +310,7 @@ diffuseColor.rgb *= clamp(vFacade.y * 0.25 + 0.8, 0.8, 1.0);
 
 /** Material dos prédios (paredes e peças), com atlas PBR opcional. */
 export function createBuildingMaterial(atlas: LayerAtlas | null): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0, flatShading: LOWPOLY });
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0, flatShading: LOWPOLY && !SOFT });
   m.defines = {};
   if (atlas) m.defines.USE_ATLAS = '';
   if (LOWPOLY) m.defines.LOWPOLY = '';

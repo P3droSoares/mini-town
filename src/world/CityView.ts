@@ -16,7 +16,7 @@ import { StreetLights } from './render/StreetLights';
 import { buildTerrainMesh } from './render/terrainMesh';
 import type { TextureLibrary } from './render/textures';
 import { TreeRenderer, scatterTrees } from './render/vegetation';
-import { LOWPOLY } from './render/style';
+import { LOWPOLY, SOFT } from './render/style';
 
 // BVH para raycast rápido nos prédios
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -414,7 +414,7 @@ export class CityView {
 /** Água: lâmina reflexiva (IBL) com ondulação animada na normal. */
 function createWaterMaterial(extra: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
   // low-poly: água turquesa chapada, facetada, levemente brilhante
-  if (LOWPOLY) return new THREE.MeshStandardMaterial({ color: '#4aa8c6', roughness: 0.22, metalness: 0, flatShading: true, ...extra });
+  if (LOWPOLY) return new THREE.MeshStandardMaterial({ color: '#4aa8c6', roughness: 0.22, metalness: 0, flatShading: !SOFT, ...extra });
   const m = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: 0.45, metalness: 0.0, ...extra });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = worldUniforms.uTime;
