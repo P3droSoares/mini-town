@@ -218,10 +218,13 @@ function speciesGeometry(kind: Species, cards: number): SpeciesGeo {
     return { trunk: mergeGeometries(parts)!, leaves: palmFronds(V(0, 10.5, 0), Math.max(8, cards), 4.2, rng), foliage: 'palm' };
   }
   if (kind === Species.Eucalyptus) {
-    const parts = [limb(V(0, -0.3, 0), V(0.2, 9, 0.1), 0.26, 0.1, 6), limb(V(0.1, 5, 0), V(1.2, 8, 0.5), 0.09, 0.04, 4)];
+    const parts = [limb(V(0, -0.3, 0), V(0.2, 9, 0.1), 0.26, 0.1, 6), limb(V(0.1, 5, 0), V(1.2, 8, 0.5), 0.09, 0.04, 4), limb(V(0.15, 6, 0.05), V(-0.7, 8.6, -0.5), 0.08, 0.04, 4)];
+    // copa alta e rala em tufos pendentes (cartões menores, mais numerosos)
     const leaves = mergeGeometries([
-      crown(V(0.2, 9.5, 0.1), 2.0, 3.0, Math.ceil(cards * 0.7), 2.8, rng, -0.2),
-      crown(V(0.9, 7.6, 0.4), 1.4, 1.6, Math.ceil(cards * 0.4), 2.2, rng, -0.2),
+      crown(V(0.2, 9.8, 0.1), 1.7, 2.2, Math.ceil(cards * 0.9), 1.9, rng, -0.25),
+      crown(V(0.9, 7.8, 0.4), 1.2, 1.3, Math.ceil(cards * 0.5), 1.6, rng, -0.25),
+      crown(V(-0.6, 8.6, -0.5), 1.1, 1.2, Math.ceil(cards * 0.45), 1.5, rng, -0.25),
+      crown(V(0.5, 11.2, -0.2), 1.0, 0.9, Math.ceil(cards * 0.35), 1.4, rng, -0.25),
     ])!;
     return { trunk: mergeGeometries(parts)!, leaves, foliage: 'euca' };
   }
