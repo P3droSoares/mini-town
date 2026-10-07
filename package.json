@@ -1,0 +1,27 @@
+{
+  "name": "mini-town-itabirito",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Cidade 3D explorável de Itabirito-MG (módulo 1 de um jogo de simulação).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "fetch-osm": "tsx scripts/fetch-osm.ts"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "three-mesh-bvh": "^0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pngjs": "^6.0.5",
+    "@types/three": "^0.170.0",
+    "pngjs": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
+}
