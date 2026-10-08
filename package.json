@@ -9,8 +9,17 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run src",
     "fetch-osm": "tsx scripts/fetch-osm.ts",
-    "fetch-assets": "tsx scripts/fetch-assets.ts"
+    "fetch-assets": "tsx scripts/fetch-assets.ts",
+    "generate-city": "tsx scripts/generate-city.ts",
+    "docker:secrets": "node scripts/gen-secrets.mjs",
+    "docker:up": "node scripts/gen-secrets.mjs && docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f --tail=100 server web",
+    "docker:smoke": "node docker/smoke.mjs",
+    "docker:backup": "docker compose exec backup pg-backup.sh once",
+    "docker:restore": "bash docker/backup/restore.sh"
   },
   "dependencies": {
     "n8ao": "^1.10.3",
@@ -22,10 +31,12 @@
     "@types/node": "^22.10.0",
     "@types/pngjs": "^6.0.5",
     "@types/three": "^0.170.0",
+    "happy-dom": "^20.14.5",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vitest": "^5.0.3"
   }
 }

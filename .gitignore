@@ -3,3 +3,14 @@ dist
 .cache
 *.log
 .DS_Store
+
+# segredos locais (gerados por scripts/gen-secrets.mjs)
+.env
+.env.*
+!.env.example
+server/.env
+*.pem
+*.key
+
+# backups do Postgres (serviço backup / docker/backup/restore.sh)
+backups/

@@ -121,6 +121,18 @@ export class GeometryWriter {
     else this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
+  /** sobrescreve as normais do último quad (normais suaves por vértice) */
+  setLastQuadNormals(n0: THREE.Vector3, n1: THREE.Vector3, n2: THREE.Vector3, n3: THREE.Vector3) {
+    const base = this.nor.length - 12;
+    if (base < 0) return;
+    const ns = [n0, n1, n2, n3];
+    for (let i = 0; i < 4; i++) {
+      this.nor[base + i * 3] = ns[i].x;
+      this.nor[base + i * 3 + 1] = ns[i].y;
+      this.nor[base + i * 3 + 2] = ns[i].z;
+    }
+  }
+
   /** caixa orientada pelo eixo u (no plano xz), com UV de parede nas laterais */
   box(cx: number, cz: number, y0: number, y1: number, ux: number, uz: number, hu: number, hv: number, color: THREE.Color, top = true) {
     const vx = -uz;

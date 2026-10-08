@@ -15,13 +15,20 @@ export class Input {
     window.addEventListener('blur', () => this.keys.clear());
   }
 
-  private isTyping(e: KeyboardEvent) {
+  /** tecla pertence a um controle da interface, não ao jogo */
+  private isUiKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
-    return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    if (!t || !(t instanceof HTMLElement)) return false;
+    if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable) return true;
+    // menus e diálogos tratam o próprio teclado
+    if (t.closest('[role=menu], [role=dialog], [role=tablist], .dlg-backdrop')) return true;
+    // botão/link focado: setas, espaço e Enter operam o controle (letras seguem como atalhos)
+    if (t !== document.body && t.matches('button, a[href], [tabindex]:not(canvas)')) return /^(Arrow|Space$|Enter$|NumpadEnter$|Home$|End$|Page)/.test(e.code);
+    return false;
   }
 
   private onDown = (e: KeyboardEvent) => {
-    if (this.isTyping(e)) return;
+    if (this.isUiKey(e)) return;
     this.keys.add(e.code);
     if (!e.repeat) this.listeners.get(e.code)?.forEach((f) => f());
   };

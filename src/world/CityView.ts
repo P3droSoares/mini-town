@@ -16,6 +16,7 @@ import { StreetLights } from './render/StreetLights';
 import { buildTerrainMesh } from './render/terrainMesh';
 import type { TextureLibrary } from './render/textures';
 import { TreeRenderer, scatterTrees } from './render/vegetation';
+import { LOWPOLY, MONO, SOFT } from './render/style';
 
 // BVH para raycast rápido nos prédios
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
@@ -89,8 +90,10 @@ export class CityView {
   readonly walkMaterial: THREE.MeshStandardMaterial;
   readonly areaMaterial: THREE.MeshStandardMaterial;
   readonly waterMaterial: THREE.MeshStandardMaterial;
-  readonly poolMaterial = new THREE.MeshStandardMaterial({ color: '#2aa4d8', roughness: 0.04, metalness: 0.1, emissive: '#0b3a52', emissiveIntensity: 0.4 });
+  readonly poolMaterial = new THREE.MeshStandardMaterial({ color: '#2aa4d8', roughness: 0.04, metalness: 0.1, emissive: '#0b3a52', emissiveIntensity: MONO ? 0 : 0.4 });
   private frontTest: FrontTest;
+  /** índice de cada prédio em `world.data.buildings` (atributo `bidx`) */
+  private readonly buildingIndex = new Map<Building, number>();
 
   constructor(
     private readonly world: WorldState,
@@ -98,6 +101,7 @@ export class CityView {
     private readonly quality: QualityPreset,
   ) {
     this.root.name = 'city';
+    world.data.buildings.forEach((b, i) => this.buildingIndex.set(b, i));
     // letreiros: nomes reais dos estabelecimentos + marcas genéricas
     this.signs = new SignAtlas(world.data.buildings.flatMap((b) => [b.name, ...(b.pois?.map((p) => p.name) ?? [])]).filter((n): n is string => !!n && n.length < 28));
     const buildingMat = createBuildingMaterial(tex.atlas);
@@ -248,7 +252,7 @@ export class CityView {
     if (lotGround.vertexCount) {
       const g = new THREE.Mesh(lotGround.toGeometry(), this.areaMaterial);
       g.receiveShadow = true;
-      const p = new THREE.Mesh(lotProps.toGeometry(), this.materials.detail);
+      const p = new THREE.Mesh(setBuildingIndex(lotProps.toGeometry()), this.materials.detail);
       p.castShadow = p.receiveShadow = true;
       this.root.add(g, p);
     }
@@ -279,6 +283,8 @@ export class CityView {
     for (const k of WRITER_KEYS) {
       if (!ws[k].vertexCount) continue;
       const g = ws[k].toGeometry();
+      // letreiros usam outro material (não leem `bidx`)
+      if (k !== 'signs') setBuildingIndex(g, spans[k], this.buildingIndex);
       g.translate(-o.x, -o.y, -o.z);
       const m = new THREE.Mesh(g, this.materials[k]);
       m.receiveShadow = true;
@@ -304,7 +310,7 @@ export class CityView {
       chunk.lod.addLevel(high.group, 0);
       chunk.lod.addLevel(low.group, this.quality.lodDistance);
       // molduras de janela instanciadas (só perto da câmera — ver update)
-      if (high.ws.windows.length && this.quality.level !== 'low') {
+      if (high.ws.windows.length && this.quality.level !== 'low' && !LOWPOLY) {
         const im = buildWindowMesh(high.ws.windows, this.windowGeometry, this.windowMaterial);
         im.userData.center = chunk.center;
         this.windowMeshes.push(im);
@@ -339,7 +345,7 @@ export class CityView {
         chunk.group.add(m);
       }
       if (yw.detail.vertexCount) {
-        const m = new THREE.Mesh(yw.detail.toGeometry(), this.materials.detail);
+        const m = new THREE.Mesh(setBuildingIndex(yw.detail.toGeometry()), this.materials.detail);
         // muros baixos: recebem sombra mas não projetam (passe de sombra mais leve)
         m.receiveShadow = true;
         chunk.group.add(m);
@@ -410,8 +416,33 @@ export class CityView {
   }
 }
 
+/** zeros compartilhados por todas as malhas sem prédio (cresce quando precisa) */
+let zeroBidx: THREE.BufferAttribute | null = null;
+
+/**
+ * Atributo `bidx` (índice do prédio + 1) para o destaque de imóveis no shader,
+ * em Uint16 (o shader recebe float; metade de Float32). Malhas do material de
+ * prédios sem prédio (muros, cercas) usam um único buffer de zeros
+ * compartilhado: o atributo precisa existir — sem ele o WebGL usaria o valor
+ * genérico daquela posição, que outro programa (ex.: LineMaterial) pode ter mudado.
+ */
+function setBuildingIndex(g: THREE.BufferGeometry, spans?: Span[], index?: Map<Building, number>): THREE.BufferGeometry {
+  const n = g.attributes.position.count;
+  if (!spans || !index) {
+    if (!zeroBidx || zeroBidx.count < n) zeroBidx = new THREE.BufferAttribute(new Uint8Array(Math.max(n, (zeroBidx?.count ?? 0) * 2)), 1, false);
+    g.setAttribute('bidx', zeroBidx);
+    return g;
+  }
+  const arr = index.size < 65535 ? new Uint16Array(n) : new Float32Array(n);
+  for (const s of spans) arr.fill((index.get(s.building) ?? -1) + 1, s.start, s.start + s.count);
+  g.setAttribute('bidx', new THREE.BufferAttribute(arr, 1, false));
+  return g;
+}
+
 /** Água: lâmina reflexiva (IBL) com ondulação animada na normal. */
 function createWaterMaterial(extra: THREE.MeshStandardMaterialParameters): THREE.MeshStandardMaterial {
+  // low-poly: água turquesa chapada, facetada, levemente brilhante
+  if (LOWPOLY) return new THREE.MeshStandardMaterial({ color: '#4aa8c6', roughness: 0.22, metalness: 0, flatShading: !SOFT, ...extra });
   const m = new THREE.MeshStandardMaterial({ color: '#ffffff', vertexColors: true, roughness: 0.45, metalness: 0.0, ...extra });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = worldUniforms.uTime;

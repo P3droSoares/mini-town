@@ -4,6 +4,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import type { Game, System } from '../core/Game';
 import type { Building, Lot } from '../data/types';
+import { MONO_LIGHT } from '../world/render/style';
 
 interface Highlight {
   building: Building | null;
@@ -29,8 +30,9 @@ export class SelectionSystem implements System {
 
   constructor(private readonly game: Game) {
     this.ray.firstHitOnly = true;
-    this.hover = this.makeHighlight('#ffffff', 0.12, 3);
-    this.selected = this.makeHighlight('#f0b429', 0.22, 4);
+    // hover em tom claro da paleta; seleção = linha cheia e grossa (o "meu" é tracejado)
+    this.hover = this.makeHighlight('#e6e7f0', 0.12, 3);
+    this.selected = this.makeHighlight(MONO_LIGHT, 0.22, 5);
     const el = game.renderer.domElement;
     el.addEventListener('pointermove', this.onMove);
     el.addEventListener('pointerleave', () => {

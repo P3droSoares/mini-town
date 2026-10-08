@@ -1,0 +1,309 @@
+# Itabirito Online — ambiente de desenvolvimento com hot reload.
+#   node scripts/gen-secrets.mjs   # cria/completa o .env (uma vez)
+#   docker compose up -d --build   # https://localhost:8443
+#   npm run docker:smoke           # verificação ponta a ponta
+# Único ponto exposto ao host: Caddy em 127.0.0.1:8443. db e server sem portas.
+#
+# Redes: "edge" (caddy, web), "proxy" (interna: caddy → server, IP fixo do
+# Caddy) e "data" (interna, sem saída: server, migrate, backup, db). O web
+# (Vite + deps npm do front) não enxerga o banco nem o server e não recebe
+# nenhum segredo; só o server conhece o papel app, só o migrate conhece o
+# papel dono, só o backup conhece o papel de leitura. Dependências do back são
+# instaladas pelo one-shot server-deps (sem segredos, sem rede data).
+name: mini-town
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-node-common: &node-common
+  <<: *hardening
+  restart: unless-stopped
+  init: true
+
+# imagem do Postgres (base fixada por digest em docker/db/Dockerfile)
+x-pg-build: &pg-build
+  context: .
+  dockerfile: docker/db/Dockerfile
+
+services:
+  # gera CA + certificado TLS do Postgres (idempotente) antes do db subir
+  certs:
+    build: *pg-build
+    <<: *hardening
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    entrypoint: ["sh", "/usr/local/bin/gen-certs.sh"]
+    user: root
+    network_mode: none
+    volumes:
+      - pg-certs:/certs
+      - pg-ca:/ca
+    restart: "no"
+
+  db:
+    build: *pg-build
+    <<: *hardening
+    # entrypoint oficial: chown do PGDATA e troca para o usuário postgres
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]
+    restart: unless-stopped
+    depends_on:
+      certs:
+        condition: service_completed_successfully
+    networks: [data]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-minitown}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?rode node scripts/gen-secrets.mjs}
+      POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=scram-sha-256
+      MINITOWN_OWNER_PASSWORD: ${MINITOWN_OWNER_PASSWORD:?rode node scripts/gen-secrets.mjs}
+      MINITOWN_APP_PASSWORD: ${MINITOWN_APP_PASSWORD:?rode node scripts/gen-secrets.mjs}
+      MINITOWN_BACKUP_PASSWORD: ${MINITOWN_BACKUP_PASSWORD:?rode node scripts/gen-secrets.mjs}
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/certs/server.crt
+      - -c
+      - ssl_key_file=/certs/server.key
+      - -c
+      - ssl_min_protocol_version=TLSv1.3
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - log_connections=on
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - pg-certs:/certs:ro
+      - ./docker/db/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      # init (só na criação do volume): papéis owner/app (server/db-init) e o
+      # papel de backup. Arquivo a arquivo: um novo script em server/db-init
+      # precisa entrar nesta lista.
+      - ./server/db-init/10-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+      - ./server/db-init/roles.psql:/docker-entrypoint-initdb.d/roles.psql:ro
+      - ./docker/db/initdb/20-backup-role.sh:/docker-entrypoint-initdb.d/20-backup-role.sh:ro
+    healthcheck:
+      # TCP só existe depois do init (o servidor temporário do init não escuta
+      # na rede); usuário app porque o pg_hba recusa o superusuário pela rede
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U minitown_app -d \"$${POSTGRES_DB}\" -q"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # one-shot SEM segredos e SEM rede data: único container do back com saída
+  # para a internet; roda `npm ci --ignore-scripts` no volume de node_modules
+  # quando o package-lock muda (pacote malicioso não vê credencial nem banco)
+  server-deps:
+    <<: *node-common
+    restart: "no"
+    build:
+      context: .
+      dockerfile: docker/server.Dockerfile
+    networks: [egress]
+    environment:
+      NODE_ENV: development
+      NODE_DEPS_INSTALL: "1"
+    command: ["true"]
+    volumes:
+      - ./server/package.json:/app/server/package.json:ro
+      - ./server/package-lock.json:/app/server/package-lock.json:ro
+      - server-node-modules:/app/server/node_modules
+
+  # one-shot: migrações + catálogo com o papel dono; a API só sobe depois.
+  # Só rede data (sem saída) e entrypoint que só confere node_modules.
+  migrate:
+    <<: *node-common
+    restart: "no"
+    build:
+      context: .
+      dockerfile: docker/server.Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      server-deps:
+        condition: service_completed_successfully
+    networks: [data]
+    environment:
+      NODE_ENV: development
+      MIGRATION_DATABASE_URL: postgres://minitown_owner:${MINITOWN_OWNER_PASSWORD:?rode node scripts/gen-secrets.mjs}@db:5432/${POSTGRES_DB:-minitown}
+      PGSSLROOTCERT: /run/pg-ca/ca.crt
+      CITY_DATA_PATH: ../public/data/itabirito.json
+    command: ["./node_modules/.bin/tsx", "/app/migrate/bootstrap.mts"]
+    # só-leitura e só o necessário (o diretório /app/server vem da imagem)
+    volumes:
+      - ./server/src:/app/server/src:ro
+      - ./server/migrations:/app/server/migrations:ro
+      - ./server/package.json:/app/server/package.json:ro
+      - ./server/package-lock.json:/app/server/package-lock.json:ro
+      - ./server/tsconfig.json:/app/server/tsconfig.json:ro
+      - server-node-modules:/app/server/node_modules
+      - ./docker/migrate:/app/migrate:ro
+      - ./public/data:/app/public/data:ro
+      - pg-ca:/run/pg-ca:ro
+
+  server:
+    <<: *node-common
+    build:
+      context: .
+      dockerfile: docker/server.Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # só o Caddy (rede proxy) e o banco (data); o web não alcança a API direto
+    networks: [proxy, data]
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: "3000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      APP_ORIGIN: ${APP_ORIGIN:-https://localhost:8443}
+      # só o papel app: a credencial do dono (MIGRATION_DATABASE_URL) fica no
+      # migrate; o server só confere schema_version() no boot
+      DATABASE_URL: postgres://minitown_app:${MINITOWN_APP_PASSWORD:?rode node scripts/gen-secrets.mjs}@db:5432/${POSTGRES_DB:-minitown}
+      # presente = TLS com verificação de CA e hostname (verify-full)
+      PGSSLROOTCERT: /run/pg-ca/ca.crt
+      SESSION_KEY: ${SESSION_KEY:?rode node scripts/gen-secrets.mjs}
+      CSRF_KEY: ${CSRF_KEY:?rode node scripts/gen-secrets.mjs}
+      EMAIL_ENC_KEY: ${EMAIL_ENC_KEY:?rode node scripts/gen-secrets.mjs}
+      EMAIL_HASH_KEY: ${EMAIL_HASH_KEY:?rode node scripts/gen-secrets.mjs}
+      PASSWORD_PEPPER: ${PASSWORD_PEPPER:-}
+      EMAIL_KEY_VERSION: ${EMAIL_KEY_VERSION:-1}
+      CITY_DATA_PATH: ../public/data/itabirito.json
+      # X-Forwarded-For só vale vindo do IP fixo do Caddy na rede proxy
+      TRUST_PROXY_HOPS: "1"
+      TRUSTED_PROXIES: 10.203.47.2
+      CHOKIDAR_USEPOLLING: "1"
+      CHOKIDAR_INTERVAL: "500"
+    volumes:
+      - ./server:/app/server
+      - server-node-modules:/app/server/node_modules
+      - ./public/data:/app/public/data:ro
+      - pg-ca:/run/pg-ca:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  web:
+    <<: *node-common
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    networks: [edge]
+    environment:
+      NODE_ENV: development
+      # sem segredos: pode instalar as próprias deps (npm ci --ignore-scripts)
+      NODE_DEPS_INSTALL: "1"
+      DOCKER: "1"
+      APP_ORIGIN: ${APP_ORIGIN:-https://localhost:8443}
+    # só o que o front precisa, só-leitura; nunca a raiz (.env, server/, docker/)
+    volumes:
+      - ./src:/app/src:ro
+      - ./public:/app/public:ro
+      - ./index.html:/app/index.html:ro
+      - ./vite.config.ts:/app/vite.config.ts:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./package.json:/app/package.json:ro
+      - ./package-lock.json:/app/package-lock.json:ro
+      - web-node-modules:/app/node_modules
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  caddy:
+    # caddy:2-alpine fixada por digest (índice multi-arquitetura, 2026-10-07)
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    <<: *hardening
+    # o binário do Caddy tem a file capability cap_net_bind_service: sem ela
+    # no conjunto limite o execve falha (EPERM), mesmo escutando em 8443
+    cap_add: [NET_BIND_SERVICE]
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    networks:
+      edge: {}
+      proxy:
+        # fixo (fora do ip_range dinâmico): é o único par em que o server confia
+        ipv4_address: 10.203.47.2
+    ports:
+      - "127.0.0.1:8443:8443"
+    environment:
+      # HSTS: max-age=0 em dev (localhost); produção usa o valor longo
+      CADDY_HSTS: ${CADDY_HSTS:-max-age=0}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # pg_dump diário (TLS verify-full, papel só-leitura) em ./backups do host:
+  # fora dos volumes nomeados, sobrevive a `docker compose down -v`
+  backup:
+    build: *pg-build
+    <<: *hardening
+    restart: unless-stopped
+    init: true
+    user: "999:999"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [data]
+    entrypoint: ["pg-backup.sh"]
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-minitown}
+      PGUSER: minitown_backup
+      PGPASSWORD: ${MINITOWN_BACKUP_PASSWORD:?rode node scripts/gen-secrets.mjs}
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/pg-ca/ca.crt
+      PGAPPNAME: minitown-backup
+      BACKUP_DIR: /backups
+      BACKUP_KEEP_DAILY: "7"
+      BACKUP_KEEP_WEEKLY: "4"
+      BACKUP_INTERVAL_HOURS: "24"
+    volumes:
+      - ./backups:/backups
+      - pg-ca:/run/pg-ca:ro
+
+networks:
+  edge:
+  # caddy → server. Sub-rede fixa (fora dos pools padrão do Docker) para o IP
+  # do Caddy ser conhecido (TRUSTED_PROXIES); se colidir com uma rede local,
+  # troque a sub-rede, o ipv4_address do caddy e o TRUSTED_PROXIES juntos.
+  proxy:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.203.47.0/28
+          ip_range: 10.203.47.8/29
+  data:
+    internal: true
+  # só o server-deps (npm ci)
+  egress:
+
+volumes:
+  pgdata:
+  pg-certs:
+  pg-ca:
+  server-node-modules:
+  web-node-modules:
+  caddy-data:
+  caddy-config:

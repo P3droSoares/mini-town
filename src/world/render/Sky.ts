@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { Sky as PreethamSky } from 'three/examples/jsm/objects/Sky.js';
+import { MONO_SKY_GLSL } from './mono';
+import { MONO } from './style';
 
 /**
  * Céu realista: atmosfera física (Preetham — espalhamento Rayleigh/Mie,
@@ -81,6 +83,9 @@ if (direction.y > 0.0) {
 }
 // no cubemap de iluminação: sem disco solar e valores limitados (evita IBL estourada)
 if (uEnvMode > 0.5) col = min(col, vec3(1.2));
+#ifdef MONO
+${MONO_SKY_GLSL()}
+#endif
 gl_FragColor = vec4(col, 1.0);
 `;
 
@@ -117,6 +122,7 @@ export class Sky {
       side: THREE.BackSide,
       depthWrite: false,
       fog: false,
+      defines: MONO ? { MONO: '' } : {},
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), this.material);
     this.mesh.scale.setScalar(4500);

@@ -2,6 +2,7 @@ import type { Building, Lot } from '../data/types';
 import type { WorldState } from '../world/WorldState';
 import { ICONS, h, svgIcon } from './dom';
 import { ZONING, buildingLabel, poiLabel } from './labels';
+import type { PropertySection } from './PropertySection';
 
 const CATEGORY: Record<string, string> = {
   residential: 'Residencial',
@@ -12,8 +13,8 @@ const CATEGORY: Record<string, string> = {
 };
 
 /**
- * Painel lateral do prédio/lote. O `lotId` exibido aqui é a chave que a
- * camada econômica usará para compra/venda de imóveis.
+ * Painel lateral do prédio/lote. Dados do mapa (OSM) + seção econômica
+ * (`PropertySection`, dados do servidor) pelo `lotId`.
  */
 export class InfoPanel {
   readonly el: HTMLElement;
@@ -26,12 +27,13 @@ export class InfoPanel {
   constructor(
     parent: HTMLElement,
     private readonly world: WorldState,
+    private readonly econ: PropertySection | null = null,
   ) {
     this.body = h('div');
     this.el = h(
       'aside',
-      { class: 'panel card', 'aria-live': 'polite', 'aria-label': 'Informações do imóvel' },
-      h('button', { class: 'close', 'aria-label': 'Fechar', onclick: () => this.close() }, '×'),
+      { class: 'panel card', 'aria-label': 'Informações do imóvel' },
+      h('button', { class: 'close', 'aria-label': 'Fechar painel', html: svgIcon(ICONS.close), onclick: () => this.close() }),
       this.body,
     );
     parent.append(this.el);
@@ -83,9 +85,8 @@ export class InfoPanel {
         h('dd', {}, `${Math.round(lot?.area ?? b.area).toLocaleString('pt-BR')} m²`),
         h('dt', {}, 'Zoneamento'),
         h('dd', {}, ZONING[lot?.zoning ?? 'misto'] ?? 'Uso misto'),
-        h('dt', {}, 'Proprietário'),
-        h('dd', {}, lot?.ownerId ?? 'Sem dono'),
       ),
+      this.econSection(b.lotId),
       h('div', { class: 'lot' }, h('span', {}, 'Lote ', h('code', {}, b.lotId)), copyBtn),
       pois ?? '',
       h(
@@ -115,7 +116,7 @@ export class InfoPanel {
     this.current = null;
     const addr = lot.address?.street ? `${lot.address.street} (aprox.)` : 'Sem endereço';
     this.body.replaceChildren(
-      h('div', { class: 'kind' }, 'Terreno vago', h('span', { class: 'tag' }, 'reservado')),
+      h('div', { class: 'kind' }, 'Terreno vago'),
       h('h2', {}, 'Lote disponível'),
       h(
         'dl',
@@ -126,16 +127,28 @@ export class InfoPanel {
         h('dd', {}, `${Math.round(lot.area).toLocaleString('pt-BR')} m²`),
         h('dt', {}, 'Zoneamento'),
         h('dd', {}, ZONING[lot.zoning ?? 'misto'] ?? lot.zoning ?? 'Uso misto'),
-        h('dt', {}, 'Proprietário'),
-        h('dd', {}, lot.ownerId ?? 'Sem dono'),
       ),
+      this.econSection(lot.lotId),
       h('div', { class: 'lot' }, h('span', {}, 'Lote ', h('code', {}, lot.lotId))),
-      h('div', { class: 'note' }, 'Terreno sem construção reservado para o mercado imobiliário (próximo módulo).'),
+      h('div', { class: 'note' }, 'Terreno sem construção: pode ser comprado e revendido no mercado.'),
     );
     this.el.classList.add('open');
   }
+  /** seção econômica (servidor) para o lote; vazia sem camada online */
+  private econSection(lotId: string): Node | string {
+    if (!this.econ) return '';
+    this.currentLot = lotId;
+    this.econ.load(lotId);
+    return this.econ.el;
+  }
+
+  /** lote exibido (prédio ou terreno) */
+  currentLot: string | null = null;
+
   close() {
     this.current = null;
+    this.currentLot = null;
+    this.econ?.load(null);
     this.el.classList.remove('open');
     this.onClose?.();
   }

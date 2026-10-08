@@ -1,0 +1,47 @@
+# Proxy TLS de desenvolvimento: único ponto exposto ao host.
+#   /api/*  -> server:3000 (Fastify; define os próprios cabeçalhos/CSP)
+#   resto   -> web:5173   (Vite dev, inclusive o websocket do HMR)
+# Variáveis (do compose): CADDY_HSTS (padrão max-age=0, ver abaixo).
+{
+	# certificado da CA local do Caddy (ver README para confiar no navegador)
+	skip_install_trust
+	# sem listener HTTP de redirecionamento (porta 80 não é publicada)
+	auto_https disable_redirects
+	admin 127.0.0.1:2019
+}
+
+https://localhost:8443 {
+	tls internal
+
+	# JSON da cidade (~2,6 MB), JS de dev e respostas da API; websocket do HMR
+	# não é afetado
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+		# HSTS vale por host (não por porta): em localhost, um max-age longo
+		# forçaria https em todo http://localhost:* do desenvolvedor (inclusive
+		# o `npm run dev` em :5173). Em dev max-age=0, que ainda apaga um HSTS
+		# antigo já gravado; produção define CADDY_HSTS com o valor longo.
+		# ">" = aplicado na resposta final, sobrescrevendo o do server (/api).
+		>Strict-Transport-Security "{$CADDY_HSTS:max-age=0}"
+	}
+
+	handle /api/* {
+		reverse_proxy server:3000
+	}
+
+	handle {
+		# CSP do front: o dev do Vite injeta <style> (HMR de CSS) e usa wss
+		# para o HMR; fontes do Google Fonts; texturas/workers podem vir de blob:
+		header {
+			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' wss://localhost:8443 data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+			Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+			Cross-Origin-Opener-Policy "same-origin"
+			X-Frame-Options "DENY"
+		}
+		reverse_proxy web:5173
+	}
+}

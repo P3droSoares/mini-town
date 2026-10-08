@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { LOWPOLY } from './style';
 
 /** Paleta "cidade mineira em miniatura": tons suaves, telhados cerâmicos. */
 export const PALETTE = {
@@ -16,14 +17,15 @@ export const PALETTE = {
   footway: '#d6c7aa',
   marking: '#f2efe6',
   markingYellow: '#e9c349',
-  grass: '#677a4b',
-  park: '#5b7442',
-  wood: '#46603a',
+  // low-poly: verdes mais vivos
+  grass: LOWPOLY ? '#7ea552' : '#677a4b',
+  park: LOWPOLY ? '#76a64c' : '#5b7442',
+  wood: LOWPOLY ? '#5f8f40' : '#46603a',
   pitch: '#5c8c40',
   cemetery: '#8a9a78',
   water: '#4a90b8',
-  terrainLow: '#56693a',
-  terrainHigh: '#435a31',
+  terrainLow: LOWPOLY ? '#74a04a' : '#56693a',
+  terrainHigh: LOWPOLY ? '#5c8a3e' : '#435a31',
   terrainSoil: '#b07a52',
   terrainUrban: '#c9bf9f',
   treeLeaves: ['#5d9a48', '#6aa84f', '#4f8a3f', '#7bb257', '#5a8f3c'],

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { LOWPOLY, MONO_LIGHT, SOFT } from './style';
 import type { LayerAtlas, TexKey, TextureLibrary } from './textures';
 
 /** Uniforms globais compartilhados (atualizados pelo ciclo dia/noite). */
@@ -10,6 +11,45 @@ export const worldUniforms = {
   uSunDirW: { value: new THREE.Vector3(0, 1, 0) },
   uSunCol: { value: new THREE.Color(1, 1, 1) },
 };
+
+/**
+ * Destaque de imóveis (jogo online): textura R8 de flags por prédio, lida
+ * pelo atributo `bidx` (índice do prédio + 1; 0 = não é prédio).
+ * 255 = meu (borda acesa + brilho leve), 96 = anunciado (faixas diagonais).
+ * Marca com LUZ em `MONO_LIGHT` (o albedo monocromático fica intacto) e com
+ * padrão diferente por significado. `uOwnAny` = 0 pula a leitura da textura
+ * (visitante/exploração: custo zero por fragmento).
+ * Um único material e zero draw calls extras — ver OwnershipOverlay.
+ */
+export const ownershipUniforms = {
+  uOwnFlags: { value: placeholderFlags() as THREE.Texture },
+  uOwnWidth: { value: 1 },
+  uOwnColor: { value: new THREE.Color(MONO_LIGHT) },
+  uOwnAny: { value: 0 },
+};
+
+function placeholderFlags() {
+  const t = new THREE.DataTexture(new Uint8Array(1), 1, 1, THREE.RedFormat, THREE.UnsignedByteType);
+  t.needsUpdate = true;
+  return t;
+}
+
+/** aplicado depois do remendo monocromático (emissivemap) e antes da luz */
+const OWN = /* glsl */ `
+if (uOwnAny > 0.5 && vBidx > 0.5) {
+  int bi = int(vBidx + 0.5) - 1;
+  int ow = int(uOwnWidth + 0.5);
+  float flag = texelFetch(uOwnFlags, ivec2(bi % ow, bi / ow), 0).r;
+  if (flag > 0.05) {
+    float mine = step(0.75, flag);
+    // meu: borda acesa (fresnel) + brilho leve constante, igual de dia e de noite
+    float rim = pow(1.0 - clamp(abs(dot(normal, normalize(vViewPosition))), 0.0, 1.0), 2.5);
+    // à venda: faixas diagonais finas (padrão, não só intensidade)
+    float stripe = step(0.8, fract((vWPos.x + vWPos.y - vWPos.z) * 0.3));
+    totalEmissiveRadiance += uOwnColor * (mine * (0.08 + 0.6 * rim) + (1.0 - mine) * stripe * 0.3);
+  }
+}
+`;
 
 /** camadas do atlas que recebem a cor do vértice (paredes pintadas etc.) */
 export const TINTABLE_LAYERS = [0, 3, 4, 7, 11, 12, 13];
@@ -62,6 +102,7 @@ mat3 tbnOf(vec2 st, vec3 N) {
 
 const MAIN = /* glsl */ `
 vec3 geoN = normalize(nonPerturbedNormal);
+#ifndef LOWPOLY
 {
   // desgaste: manchas grandes em tudo; lajes/telhados encardidos
   vec3 wn = normalize(cross(dFdx(vWPos), dFdy(vWPos)));
@@ -72,11 +113,17 @@ vec3 geoN = normalize(nonPerturbedNormal);
     diffuseColor.rgb *= mix(0.6, 1.0, st);
   }
 }
+#endif
 #ifdef USE_ATLAS
 {
   float lay = vAux.w - 1.0;
   if (lay > -0.5) {
     int li = int(lay + 0.5);
+#ifdef LOWPOLY
+    // cor chapada: média da textura (camadas tingíveis já vêm na cor do vértice)
+    // pastilhas (5) ficariam quase pretas: usam só a cor do prédio
+    if (uLayerTint[li] < 0.5 && li != 5) diffuseColor.rgb *= uLayerNorm[li] * 1.3;
+#else
     vec2 auv = vUvM * uLayerScale[li];
     vec3 tex = texture(uAtlas, vec3(auv, lay)).rgb;
     if (uLayerTint[li] > 0.5) {
@@ -89,6 +136,7 @@ vec3 geoN = normalize(nonPerturbedNormal);
     vec3 nt = texture(uAtlasN, vec3(auv, lay)).xyz * 2.0 - 1.0;
     mat3 tb = tbnOf(auv, geoN);
     normal = normalize(tb * vec3(nt.xy * 0.9, nt.z));
+#endif
   }
 }
 #endif
@@ -217,6 +265,7 @@ if (vFacade.w > 0.0 && vAux.z > 0.5) {
   }
 
   // escorrimento sob os peitoris e da platibanda (fachadas envelhecidas)
+#ifndef LOWPOLY
   if (glass < 0.5 && styleId != 6.0) {
     float colN = hash21(vec2(floor(local * 3.0), seed * 11.0));
     float inWinX = step(win.x - 0.05, lp.x) * step(lp.x, win.z + 0.05);
@@ -225,6 +274,7 @@ if (vFacade.w > 0.0 && vAux.z > 0.5) {
     float drip = smoothstep(topV - 3.2, topV - 0.2, v) * (0.4 + 0.6 * hash21(vec2(floor(local * 2.3), 7.0)));
     diffuseColor.rgb *= 1.0 - 0.24 * streak - 0.16 * drip;
   }
+#endif
   // barrado das casas coloniais
   if (styleId == 0.0 && v < 0.7 && v > -1.5 && glass < 0.5 && !door) {
     diffuseColor.rgb = mix(diffuseColor.rgb, trim * 0.9, 0.8);
@@ -233,6 +283,18 @@ if (vFacade.w > 0.0 && vAux.z > 0.5) {
   if (v < 0.0) diffuseColor.rgb *= 0.8;
 
   mat3 tf = tbnOf(vFacade.xy, geoN);
+#ifdef LOWPOLY
+  bump = vec2(0.0);
+  if (glass > 0.5) {
+    float on = step(1.0 - clamp(uLitRatio + litBoost, 0.0, 1.0), hash21(id + vec2(seed * 97.0, seed * 31.0) + 0.37));
+    vec3 gl = mix(vec3(0.42, 0.6, 0.74), vec3(0.62, 0.78, 0.88), step(0.7, h));
+    if (curtainWall > 0.5) gl = mix(vec3(0.38, 0.62, 0.8), vec3(0.5, 0.72, 0.86), h);
+    diffuseColor.rgb = gl * mix(1.0, 0.25, uNight);
+    roughnessFactor = 0.25;
+    metalnessFactor = 0.0;
+    totalEmissiveRadiance += on * uNight * vec3(1.0, 0.78, 0.48) * 1.1;
+  }
+#else
   if (glass > 0.5) {
     // ---- interior mapping: raio da câmera para dentro de um cômodo
     vec3 T = normalize(tf[0]);
@@ -277,6 +339,7 @@ if (vFacade.w > 0.0 && vAux.z > 0.5) {
     metalnessFactor = 0.15;
     totalEmissiveRadiance += on * uNight * room * vec3(1.15, 0.86, 0.6) * (1.3 + max(litBoost, 0.0)) * (inBlind ? 0.7 : 1.0);
   }
+#endif
 
   if (dot(bump, bump) > 0.0001) normal = normalize(tf * normalize(vec3(bump, 1.0)));
 }
@@ -286,11 +349,14 @@ diffuseColor.rgb *= clamp(vFacade.y * 0.25 + 0.8, 0.8, 1.0);
 
 /** Material dos prédios (paredes e peças), com atlas PBR opcional. */
 export function createBuildingMaterial(atlas: LayerAtlas | null): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0 });
-  if (atlas) m.defines = { USE_ATLAS: '' };
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0, flatShading: LOWPOLY && !SOFT });
+  m.defines = {};
+  if (atlas) m.defines.USE_ATLAS = '';
+  if (LOWPOLY) m.defines.LOWPOLY = '';
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uNight = worldUniforms.uNight;
     shader.uniforms.uLitRatio = worldUniforms.uLitRatio;
+    Object.assign(shader.uniforms, ownershipUniforms);
     if (atlas) {
       const pad = <T>(arr: T[], fill: T) => Array.from({ length: 16 }, (_, i) => arr[i] ?? fill);
       shader.uniforms.uAtlas = { value: atlas.albedo };
@@ -302,23 +368,25 @@ export function createBuildingMaterial(atlas: LayerAtlas | null): THREE.MeshStan
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute vec4 facade;\nattribute vec4 style;\nattribute vec4 aux;\nvarying vec4 vFacade;\nvarying vec4 vStyle;\nvarying vec4 vAux;\nvarying vec2 vUvM;\nvarying vec3 vWPos;',
+        '#include <common>\nattribute vec4 facade;\nattribute vec4 style;\nattribute vec4 aux;\nattribute float bidx;\nvarying vec4 vFacade;\nvarying vec4 vStyle;\nvarying vec4 vAux;\nvarying vec2 vUvM;\nvarying vec3 vWPos;\nvarying float vBidx;',
       )
       .replace(
         '#include <begin_vertex>',
-        '#include <begin_vertex>\nvFacade = facade;\nvStyle = style;\nvAux = aux;\nvUvM = uv;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+        '#include <begin_vertex>\nvFacade = facade;\nvStyle = style;\nvAux = aux;\nvUvM = uv;\nvBidx = bidx;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${PARS}`)
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${MAIN}`);
+      .replace('#include <common>', `#include <common>\n${PARS}\nvarying float vBidx;\nuniform highp sampler2D uOwnFlags;\nuniform float uOwnWidth;\nuniform vec3 uOwnColor;\nuniform float uOwnAny;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${MAIN}`)
+      .replace('#include <lights_physical_fragment>', `${OWN}\n#include <lights_physical_fragment>`);
   };
-  m.customProgramCacheKey = () => `building-v4-${!!atlas}`;
+  m.customProgramCacheKey = () => `building-v6-${!!atlas}-${LOWPOLY}`;
   return m;
 }
 
 /** Superfície texturizada (ruas, calçadas): textura normalizada x vertex color. */
 export function createTexturedMaterial(tex: TextureLibrary, key: TexKey, normalScale = 1, extra: THREE.MeshStandardMaterialParameters = {}) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, ...extra });
+  if (LOWPOLY) return m;
   return tex.apply(m, key, normalScale, true);
 }
 
