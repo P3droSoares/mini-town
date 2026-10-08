@@ -37,12 +37,46 @@ Outros scripts:
 | Alternar modo | `C` ou botão no canto | botão no canto |
 | Buscar rua | `/` foca a busca | campo no topo |
 | Prédio | passar o mouse destaca · clique abre o painel | toque abre o painel |
-| Minimapa | clique para ir até o ponto | toque |
+| Minimapa | clique para ir até o ponto (na corrida: alterna zoom do GPS) | toque |
+| **App de entregas** | `E` ou botão do saldo (topo) | botão do saldo |
+| **Bicicleta / moto** | `F` sobe/desce · `W` acelera · `S` freia e dá ré · `A D` vira · `Espaço` freio · `Shift` embala | botão subir/descer · joystick: cima acelera, baixo freia, lados viram |
+| Aceitar corrida | `Enter` ou botão no cartão | botão no cartão |
 | `Esc` | fecha painel/menu | — |
 
 O menu (☰ ou relógio) permite fixar/acelerar a hora, escolher a **qualidade gráfica**,
 ligar o **efeito maquete (tilt-shift)**, desligar sombras, mostrar FPS e ajustar o
 movimento nas ruas.
+
+## Modo entregador (iFood)
+
+Quem ainda não tem empresa pode trabalhar de entregador de app:
+
+1. Abra o app (`E` ou o botão com o saldo, no topo). O jogador começa com **R$ 500**.
+2. Compre a **bag térmica** (R$ 120) e um veículo: **bicicleta** (R$ 350, até 32 km/h)
+   ou **moto** (R$ 1.500, até 60 km/h). O saldo inicial só dá para a bike: a moto vem
+   com o dinheiro das entregas.
+3. Ligue **Disponível**: o boneco vai para a rua montado, com a bag nas costas.
+4. Chegam **ofertas de corrida** (restaurante → cliente, distância e valor) com 20 s
+   para aceitar.
+5. Aceitou: o **GPS** desenha o caminho com setas no chão, um feixe de luz marca o
+   destino, um marcador na tela mostra a distância e o minimapa vira GPS (aproximado,
+   girando com a câmera). Saiu da rota, ele recalcula.
+6. **Pare na calçada** do restaurante para retirar e na do cliente para entregar.
+   Pagamento: R$ 10 + R$ 30/km do trajeto, mais **gorjeta** se chegar rápido.
+
+Detalhes:
+
+- Restaurantes parceiros (24) são prédios comerciais escolhidos de forma determinística;
+  o nome aparece no letreiro e no painel do prédio. Clientes são prédios residenciais.
+- Rotas: A* no grafo viário (`src/world/routing.ts`), respeitando mão única.
+- Física arcade: aceleração/freio, esterço sensível à velocidade, inclinação nas curvas,
+  ladeira pesa mais na bike, colisão com prédios e carros (os carros freiam atrás do
+  jogador). Moto acende farol à noite.
+- Durante a corrida não há teletransporte (minimapa, busca, "andar até aqui"); a câmera
+  de cidade continua liberada e, ao voltar, o jogador está onde parou.
+- Saldo, itens e estatísticas ficam no navegador (`localStorage`). Para testar no
+  console: `profile.add(2000_00)` (centavos) ou `profile.reset()`.
+- Preços e pagamento em `src/economy/catalog.ts` (inclui `DELIVERY_APP`, o nome do app).
 
 ## Visual (realista, estilo city builder)
 
@@ -127,10 +161,12 @@ src/
   world/              WorldState (estado puro), HeightField, RoadGraph, geo
     CityView.ts       renderização por chunks (merge + LOD + culling)
     render/           geometria de prédios/ruas/áreas/terreno, materiais, céu, postes, árvores
-  entities/           Player, geometrias de NPC
-  systems/            TimeSystem, DayNightSystem, TrafficSystem, SelectionSystem
+    routing.ts        rotas (A*) e progresso ao longo da rota (GPS)
+  entities/           Player (a pé e montado), vehicles (bike/moto/bag + física), geometrias de NPC
+  economy/            PlayerProfile (saldo/itens), catálogo/preços, restaurantes e clientes
+  systems/            TimeSystem, DayNightSystem, TrafficSystem, SelectionSystem, DeliverySystem
   core/               Game (loop), câmeras, Input, PostFX (SSAO/bloom/tilt-shift), quality
-  ui/                 HUD, painel do lote, minimapa, busca, menu, joystick, loading
+  ui/                 HUD, painel do lote, minimapa/GPS, busca, menu, joystick, loading, app de entregas
 ```
 
 Princípios:
@@ -214,5 +250,7 @@ Dicas:
 ## Próximos passos (fora do escopo deste módulo)
 
 - Camada econômica: compra/venda de lotes usando `lotId`, preços por zoneamento.
+- Trabalhar na própria empresa: entregas do seu restaurante, coleta de lixo, entregas
+  do supermercado (o `DeliverySystem` já separa oferta/rota/retirada/entrega).
 - Servidor: `ServerWorldSource`, autenticação e sincronização de jogador/NPCs.
 - Construção da geometria em Web Worker para áreas maiores.

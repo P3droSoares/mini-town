@@ -12,6 +12,9 @@ export class WalkCamera {
   pitch = 0.32;
   distance = 7;
   enabled = false;
+  /** montado: volta sozinha para trás do veículo quando não está sendo arrastada */
+  follow = false;
+  private lastLook = 0;
   private drag: { id: number; x: number; y: number; moved: number } | null = null;
   private pinch = new Map<number, { x: number; y: number }>();
   private pinchDist = 0;
@@ -64,6 +67,7 @@ export class WalkCamera {
     this.drag.x = e.clientX;
     this.drag.y = e.clientY;
     this.drag.moved += Math.abs(dx) + Math.abs(dy);
+    this.lastLook = performance.now();
     const k = e.pointerType === 'touch' ? 0.006 : 0.0045;
     this.yaw -= dx * k;
     this.pitch = THREE.MathUtils.clamp(this.pitch + dy * k, -0.15, 1.25);
@@ -91,6 +95,11 @@ export class WalkCamera {
 
   update(dt: number) {
     const s = this.player.state;
+    if (this.follow && !this.drag && Math.abs(s.speed) > 0.8 && performance.now() - this.lastLook > 1200) {
+      const d = Math.atan2(Math.sin(s.heading + Math.PI - this.yaw), Math.cos(s.heading + Math.PI - this.yaw));
+      this.yaw += d * Math.min(1, dt * 2.2);
+      this.pitch += (0.26 - this.pitch) * Math.min(1, dt * 1.2);
+    }
     this.target.set(s.x, s.y + 1.6, s.z);
     // colisão da câmera com prédios (BVH) — só chunks próximos
     const near = this.colliders().filter((o) => o.userData.chunk && o.userData.chunk.center.distanceTo(this.target) < 400);
@@ -118,6 +127,9 @@ export class WalkCamera {
     const desired = this.target.clone().addScaledVector(best.dir, best.dist);
     const ground = this.world.height.sample(desired.x, desired.z) + 0.6;
     if (desired.y < ground) desired.y = ground;
+    // batida: tremida curta
+    const b = this.player.bump;
+    if (b > 0) desired.add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(b * 0.35));
     // suaviza só a aproximação para não "pular"
     this.camera.position.lerp(desired, Math.min(1, dt * 14));
     this.camera.lookAt(this.target);

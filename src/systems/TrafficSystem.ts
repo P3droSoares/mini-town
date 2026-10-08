@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Game, System } from '../core/Game';
+import type { Obstacle } from '../entities/Player';
 import { type VehicleModel, createPedestrianMaterial, pedestrianGeometry, vehicleModels } from '../entities/npcGeometry';
 import { type GraphEdge, RoadGraph } from '../world/RoadGraph';
 import { SIDEWALK_WIDTH } from '../world/render/roadGeometry';
@@ -27,6 +28,8 @@ interface Agent {
   slot: number;
   /** cor da carroceria (carros) */
   color: THREE.Color;
+  /** caixa de colisão (carros), atualizada a cada frame */
+  box: Obstacle;
   /** pele, camisa, calça, fase/frequência do passo (pedestres) */
   looks: Float32Array;
 }
@@ -74,6 +77,10 @@ export class TrafficSystem implements System {
   private occupancy = new Map<number, Agent[]>();
   readonly stats = { cars: 0 };
   private boundsAcc = 1;
+  /** carros parados no meio-fio (colisão) */
+  private parkedBoxes: Obstacle[] = [];
+  /** carros (andando e estacionados) perto do jogador — colisão do jogador */
+  readonly nearPlayer: Obstacle[] = [];
 
   constructor(
     private readonly game: Game,
@@ -178,7 +185,9 @@ export class TrafficSystem implements System {
           if (!world.isInsideBounds(x, z, -20)) continue;
           // mão de direção do lado em que está estacionado
           const yaw = Math.atan2(ux * side, uz * side);
-          spots.push({ x, y: world.height.sample(x, z) + 0.06, z, yaw, m: rng() < 0.45 ? 0 : rng() < 0.6 ? 1 : rng() < 0.7 ? 2 : 3 });
+          const m = rng() < 0.45 ? 0 : rng() < 0.6 ? 1 : rng() < 0.7 ? 2 : 3;
+          spots.push({ x, y: world.height.sample(x, z) + 0.06, z, yaw, m });
+          this.parkedBoxes.push({ x, z, yaw, hw: models[m].width / 2, hl: models[m].length / 2 });
         }
       }
     }
@@ -210,7 +219,24 @@ export class TrafficSystem implements System {
   }
 
   private newAgent(edges: GraphEdge[]): Agent {
-    return { active: false, edge: edges[0], dist: 0, speed: 0, maxSpeed: 0, lateral: 0, yaw: 0, x: 0, y: 0, z: 0, phase: this.rng() * 10, model: 0, slot: 0, color: new THREE.Color(), looks: new Float32Array(12) };
+    return {
+      active: false,
+      edge: edges[0],
+      dist: 0,
+      speed: 0,
+      maxSpeed: 0,
+      lateral: 0,
+      yaw: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+      phase: this.rng() * 10,
+      model: 0,
+      slot: 0,
+      color: new THREE.Color(),
+      looks: new Float32Array(12),
+      box: { x: 0, z: 0, yaw: 0, hw: 1, hl: 2 },
+    };
   }
 
   /** atividade por hora (0..1): madrugada vazia, picos 7–9h e 17–19h */
@@ -307,6 +333,9 @@ export class TrafficSystem implements System {
     const wantPeds = Math.round(this.maxPeds * act * (1 - night * 0.6));
     const f = this.game.focus;
     const recycle2 = 800 * 800;
+    // jogador na rua (a pé ou montado): carros freiam atrás dele
+    const pl = this.game.mode === 'walk' ? this.game.player.state : null;
+    this.nearPlayer.length = 0;
 
     // ---- carros
     this.packed = this.models.map(() => 0);
@@ -335,6 +364,13 @@ export class TrafficSystem implements System {
       activeCars++;
       let gap = Infinity;
       for (const o of this.occupancy.get(a.edge.id) ?? []) if (o !== a && o.dist > a.dist) gap = Math.min(gap, o.dist - a.dist);
+      if (pl) {
+        const dx = pl.x - a.x;
+        const dz = pl.z - a.z;
+        const along = dx * Math.sin(a.yaw) + dz * Math.cos(a.yaw);
+        const side = Math.abs(dx * Math.cos(a.yaw) - dz * Math.sin(a.yaw));
+        if (along > 0 && along < 30 && side < 1.8) gap = Math.min(gap, along);
+      }
       const len = this.models[a.model].model.length + 1.5;
       const target = gap < len + 2 ? 0 : gap < len + 12 ? a.maxSpeed * ((gap - len - 2) / 10) : a.maxSpeed;
       a.speed += (target - a.speed) * Math.min(1, dt * (target < a.speed ? 6 : 1.5));
@@ -355,7 +391,13 @@ export class TrafficSystem implements System {
       pos.set(a.x, a.y, a.z);
       m4.compose(pos, q, scl);
       this.setCar(a, m4);
+      if (pl && (a.x - pl.x) ** 2 + (a.z - pl.z) ** 2 < 40 * 40) {
+        const md = this.models[a.model].model;
+        Object.assign(a.box, { x: a.x, z: a.z, yaw: a.yaw, hw: md.width / 2, hl: md.length / 2 });
+        this.nearPlayer.push(a.box);
+      }
     }
+    if (pl) for (const b of this.parkedBoxes) if ((b.x - pl.x) ** 2 + (b.z - pl.z) ** 2 < 40 * 40) this.nearPlayer.push(b);
     this.models.forEach((mm, mi) => {
       for (const im of mm.meshes) {
         im.count = this.packed[mi];

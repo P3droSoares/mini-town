@@ -49,6 +49,7 @@ export class Hud {
     root.append(this.runBtn);
 
     game.onModeChange.push((m) => this.renderMode(m));
+    game.player.onRideChange.push(() => this.renderMode(game.mode));
     this.renderMode(game.mode);
   }
 
@@ -58,14 +59,19 @@ export class Hud {
       ? `${svgIcon(ICONS.city)}<span class="lbl">Ver cidade</span>`
       : `${svgIcon(ICONS.walk)}<span class="lbl">Andar a pé</span>`;
     this.modeBtn.classList.toggle('active', walk);
+    const riding = walk && !!this.game.player.state.vehicle;
     this.joystick.visible = walk && this.game.mobile;
     this.runBtn.classList.toggle('show', walk && this.game.mobile);
     this.root.classList.toggle('walk', walk);
     const mob = this.game.mobile;
-    this.hint.innerHTML = walk
+    this.hint.innerHTML = riding
+      ? mob
+        ? 'Joystick: para cima acelera, para baixo freia, para os lados vira'
+        : '<kbd>W</kbd> acelera · <kbd>S</kbd> freia e dá ré · <kbd>A D</kbd> vira · <kbd>Espaço</kbd> freio · <kbd>F</kbd> descer'
+      : walk
       ? mob
         ? 'Joystick para andar · arraste para olhar · pinça para zoom'
-        : '<kbd>W A S D</kbd> andar · <kbd>Shift</kbd> correr · arraste para olhar · <kbd>C</kbd> ver cidade'
+        : '<kbd>W A S D</kbd> andar · <kbd>Shift</kbd> correr · arraste para olhar · <kbd>C</kbd> ver cidade · <kbd>E</kbd> entregas'
       : mob
         ? 'Arraste para mover · 2 dedos giram e dão zoom · toque num prédio'
         : 'Arraste para mover · botão direito gira · roda dá zoom · <kbd>C</kbd> andar a pé';
@@ -83,6 +89,7 @@ export class Hud {
     this.toastEl.textContent = msg;
     this.toastEl.classList.add('show');
     clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 2200);
+    // mensagens longas ficam mais tempo
+    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), Math.max(2200, msg.length * 60));
   }
 }

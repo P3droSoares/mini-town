@@ -159,5 +159,6 @@ export class DayNightSystem implements System {
     worldUniforms.uSunDirW.value.copy(game.sunDir);
     worldUniforms.uSunCol.value.copy(light.color).multiplyScalar(light.intensity);
     game.view.streetLights?.setNight(MONO ? Math.max(this.night, 0.85) : this.night);
+    game.player.setLights(this.night > 0.3);
   }
 }

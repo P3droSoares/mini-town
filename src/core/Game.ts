@@ -44,6 +44,11 @@ export class Game {
   readonly sun = new THREE.DirectionalLight('#fff4e0', 2.6);
   readonly hemi = new THREE.HemisphereLight('#cfe6ff', '#8a7a5a', 1.1);
   mode: CameraMode = 'city';
+  /**
+   * Jogador preso à posição atual (corrida em andamento): sem teletransporte
+   * pela busca/minimapa e, ao voltar da câmera de cidade, continua onde estava.
+   */
+  positionLocked = false;
   /** ponto de interesse atual (centro da sombra, NPCs, minimapa) */
   readonly focus = new THREE.Vector3();
   /** direção do sol (unitária, do chão para o sol) */
@@ -107,8 +112,14 @@ export class Game {
 
     this.cityCam = new CityCamera(this.camera, opts.canvas, this.world);
     this.player = new Player(this.world);
-    this.scene.add(this.player.mesh);
+    this.scene.add(this.player.mesh, this.player.parked);
     this.walkCam = new WalkCamera(this.camera, opts.canvas, this.player, this.world, () => this.view.pickMeshes);
+    // montado: câmera de perseguição mais afastada
+    this.player.onRideChange.push((v) => {
+      this.walkCam.follow = !!v;
+      this.walkCam.distance = v ? this.player.riding!.camDistance : 7;
+      if (v) this.walkCam.alignBehind();
+    });
 
     this.input.on('KeyC', () => this.toggleMode());
     window.addEventListener('resize', this.onResize);
@@ -143,13 +154,16 @@ export class Game {
     this.mode = m;
     if (m === 'walk') {
       const t = this.cityCam.target;
-      this.player.spawn(t.x, t.z);
       this.player.mesh.visible = true;
       this.cityCam.enabled = false;
       this.walkCam.enabled = true;
-      // olha na mesma direção que a câmera de cidade olhava
-      const d = t.clone().sub(this.camera.position);
-      this.walkCam.yaw = Math.atan2(-d.x, -d.z);
+      if (this.positionLocked) this.walkCam.alignBehind();
+      else {
+        this.player.spawn(t.x, t.z);
+        // olha na mesma direção que a câmera de cidade olhava
+        const d = t.clone().sub(this.camera.position);
+        this.walkCam.yaw = Math.atan2(-d.x, -d.z);
+      }
       this.walkCam.pitch = 0.3;
       this.camera.near = 0.3;
       this.camera.fov = 60;
@@ -176,13 +190,15 @@ export class Game {
     c.updateProjectionMatrix();
   }
 
-  /** teleporta o jogador (modo a pé) ou voa a câmera (modo cidade) */
-  goTo(x: number, z: number, distance = 160) {
+  /** teleporta o jogador (modo a pé) ou voa a câmera (modo cidade); false = bloqueado */
+  goTo(x: number, z: number, distance = 160): boolean {
     if (this.mode === 'walk') {
+      if (this.positionLocked) return false;
       this.player.spawn(x, z);
     } else {
       this.cityCam.flyTo(x, z, distance);
     }
+    return true;
   }
 
   start() {
@@ -222,10 +238,16 @@ export class Game {
     const dt = Math.min(raw, 0.1);
     if (document.visibilityState === 'visible') this.adaptResolution(raw);
     if (this.mode === 'walk') {
-      this.player.update(dt, this.input.move, this.input.run, this.walkCam.yaw);
+      this.player.update(dt, this.input.move, this.input.run, this.walkCam.yaw, this.input.down('Space'));
       this.walkCam.update(dt);
       const s = this.player.state;
       this.focus.set(s.x, s.y, s.z);
+      // sensação de velocidade: abre o campo de visão em cima do veículo
+      const fov = this.player.riding ? 60 + 9 * Math.min(1, Math.abs(s.speed) / 17) : 60;
+      if (Math.abs(this.camera.fov - fov) > 0.05) {
+        this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * 3);
+        this.camera.updateProjectionMatrix();
+      }
     } else {
       this.cityCam.update(dt);
       this.focus.copy(this.cityCam.target);

@@ -7,7 +7,7 @@ import { worldUniforms } from '../world/render/materials';
  * para instanciar centenas de NPCs. Frente = +z, chão = y 0.
  */
 
-function paint(g: THREE.BufferGeometry, hex: string): THREE.BufferGeometry {
+export function paint(g: THREE.BufferGeometry, hex: string): THREE.BufferGeometry {
   const ng = g.index ? g.toNonIndexed() : g;
   if (ng.attributes.uv) ng.deleteAttribute('uv');
   const c = new THREE.Color(hex);
@@ -19,7 +19,7 @@ function paint(g: THREE.BufferGeometry, hex: string): THREE.BufferGeometry {
   return ng;
 }
 
-const box = (w: number, h: number, d: number, x: number, y: number, z: number) => new THREE.BoxGeometry(w, h, d).translate(x, y, z);
+export const box = (w: number, h: number, d: number, x: number, y: number, z: number) => new THREE.BoxGeometry(w, h, d).translate(x, y, z);
 
 /** Extruda um perfil lateral (z, y) na largura, centralizado em x. */
 function sideExtrude(profile: [number, number][], width: number, bevel = 0.06): THREE.BufferGeometry {
@@ -56,6 +56,7 @@ export interface VehicleModel {
   /** brilho de faróis/lanternas (aditivo, à noite) */
   glow: THREE.BufferGeometry;
   length: number;
+  width: number;
   /** probabilidade relativa na frota */
   weight: number;
   bus?: boolean;
@@ -137,6 +138,7 @@ function car(s: CarSpec): VehicleModel {
     trim: mergeGeometries(trim)!,
     glow: lightsGlow(L, W, belt - 0.2),
     length: L,
+    width: W,
     weight: s.weight,
   };
 }
@@ -182,6 +184,7 @@ function bus(): VehicleModel {
     trim: mergeGeometries(trim)!,
     glow: lightsGlow(L + 0.1, W, 0.95),
     length: L,
+    width: W,
     weight: 0.04,
     bus: true,
   };
@@ -219,6 +222,7 @@ function truck(): VehicleModel {
     trim: mergeGeometries(trim)!,
     glow: lightsGlow(7.2, W, 0.95, 0.4),
     length: 7.2,
+    width: W,
     weight: 0.05,
   };
 }
@@ -292,41 +296,81 @@ export function pedestrianGeometry(): THREE.BufferGeometry {
   return mergeGeometries(parts)!;
 }
 
+/**
+ * Balanço de membros na GPU: pernas giram no quadril, braços no ombro.
+ * `rider` = pose de piloto por instância (`aPose`: x/y = ângulo base de
+ * pernas/braços, negativo = à frente; w/z = quanto pernas/braços balançam).
+ */
+function limbShader(rider: boolean) {
+  const decl = `attribute float part;
+attribute float limb;
+attribute vec3 aWalk;
+${rider ? 'attribute vec4 aPose;' : ''}
+uniform float uTime;
+float pedLimbAngle() {
+  float sw = sin(uTime * aWalk.y + aWalk.x) * aWalk.z;
+${
+  rider
+    ? `  if (limb < 2.5) return aPose.x + (limb < 1.5 ? sw : -sw) * 0.5 * aPose.w;
+  return aPose.y + (limb < 3.5 ? -sw : sw) * 0.45 * aPose.z;`
+    : '  return limb < 1.5 ? sw * 0.5 : limb < 2.5 ? -sw * 0.5 : limb < 3.5 ? -sw * 0.45 : sw * 0.45;'
+}
+}
+vec3 pedRotX(vec3 v, float a) {
+  float c = cos(a);
+  float s = sin(a);
+  return vec3(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
+}`;
+  const move = `if (limb > 0.5) {
+  float pivot = limb < 2.5 ? 0.93 : 1.56;
+  vec3 p = transformed - vec3(0.0, pivot, 0.0);
+${
+  rider
+    ? `  if (limb < 2.5) {
+    // montado: pernas (sem joelho) mais curtas e abertas quando esticadas à frente (tanque da moto)
+    p.y *= 1.0 - 0.2 * step(0.1, -aPose.x);
+    p.x += sign(p.x) * max(0.0, -p.y) * clamp(-aPose.x - 0.6, 0.0, 1.0) * 0.25;
+  }
+`
+    : ''
+}  transformed = pedRotX(p, pedLimbAngle()) + vec3(0.0, pivot, 0.0);
+}`;
+  return { decl, move };
+}
+
 /** Material do pedestre: cores por parte (pele/camisa/calça) e balanço de membros na GPU. */
-export function createPedestrianMaterial(): THREE.MeshStandardMaterial {
+export function createPedestrianMaterial(rider = false): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
+  const { decl, move } = limbShader(rider);
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = worldUniforms.uTime;
     shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\nattribute vec3 aSkin;\nattribute vec3 aShirt;\nattribute vec3 aPants;\n${decl}`)
       .replace(
-        '#include <common>',
-        `#include <common>
-attribute float part;
-attribute float limb;
-attribute vec3 aSkin;
-attribute vec3 aShirt;
-attribute vec3 aPants;
-attribute vec3 aWalk;
-uniform float uTime;`,
+        '#include <beginnormal_vertex>',
+        rider ? '#include <beginnormal_vertex>\nif (limb > 0.5) objectNormal = pedRotX(objectNormal, pedLimbAngle());' : '#include <beginnormal_vertex>',
       )
-      .replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
-if (limb > 0.5) {
-  float sw = sin(uTime * aWalk.y + aWalk.x) * aWalk.z;
-  float ang = limb < 1.5 ? sw * 0.5 : limb < 2.5 ? -sw * 0.5 : limb < 3.5 ? -sw * 0.45 : sw * 0.45;
-  float pivot = limb < 2.5 ? 0.93 : 1.56;
-  vec3 p = transformed - vec3(0.0, pivot, 0.0);
-  float c = cos(ang); float s = sin(ang);
-  transformed = vec3(p.x, p.y * c - p.z * s, p.y * s + p.z * c) + vec3(0.0, pivot, 0.0);
-}`,
-      )
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${move}`)
       .replace(
         '#include <color_vertex>',
         `#include <color_vertex>
 vColor.rgb = part < 0.5 ? aSkin : part < 1.5 ? aShirt : part < 2.5 ? aPants : vec3(0.05, 0.045, 0.04);`,
       );
   };
-  m.customProgramCacheKey = () => 'pedestrian-v1';
+  m.customProgramCacheKey = () => (rider ? 'pedestrian-rider-v1' : 'pedestrian-v1');
+  return m;
+}
+
+/** Profundidade (sombra) com a mesma pose — senão a sombra do piloto sai de pé. */
+export function createPedestrianDepthMaterial(rider = false): THREE.MeshDepthMaterial {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  const { decl, move } = limbShader(rider);
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = worldUniforms.uTime;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${decl}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${move}`);
+  };
+  m.customProgramCacheKey = () => (rider ? 'pedestrian-depth-rider-v1' : 'pedestrian-depth-v1');
   return m;
 }
