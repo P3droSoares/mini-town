@@ -1,0 +1,20 @@
+-- Papéis do Itabirito Online (executado uma única vez, na criação do volume).
+-- Variáveis psql: owner_pw, app_pw, db. Senhas com hash scram-sha-256.
+SET password_encryption = 'scram-sha-256';
+
+CREATE ROLE minitown_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'owner_pw';
+CREATE ROLE minitown_app   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD :'app_pw';
+-- o app nunca segura conexão ociosa em transação nem consulta presa
+ALTER ROLE minitown_app SET statement_timeout = '15s';
+ALTER ROLE minitown_app SET idle_in_transaction_session_timeout = '30s';
+
+ALTER DATABASE :"db" OWNER TO minitown_owner;
+REVOKE ALL ON DATABASE :"db" FROM PUBLIC;
+GRANT CONNECT, TEMPORARY ON DATABASE :"db" TO minitown_owner;
+GRANT CONNECT ON DATABASE :"db" TO minitown_app;
+
+\connect :"db"
+-- schema public pertence ao dono; app só usa (sem CREATE)
+ALTER SCHEMA public OWNER TO minitown_owner;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO minitown_app;

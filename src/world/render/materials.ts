@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { LOWPOLY, SOFT } from './style';
+import { LOWPOLY, MONO_LIGHT, SOFT } from './style';
 import type { LayerAtlas, TexKey, TextureLibrary } from './textures';
 
 /** Uniforms globais compartilhados (atualizados pelo ciclo dia/noite). */
@@ -11,6 +11,45 @@ export const worldUniforms = {
   uSunDirW: { value: new THREE.Vector3(0, 1, 0) },
   uSunCol: { value: new THREE.Color(1, 1, 1) },
 };
+
+/**
+ * Destaque de imóveis (jogo online): textura R8 de flags por prédio, lida
+ * pelo atributo `bidx` (índice do prédio + 1; 0 = não é prédio).
+ * 255 = meu (borda acesa + brilho leve), 96 = anunciado (faixas diagonais).
+ * Marca com LUZ em `MONO_LIGHT` (o albedo monocromático fica intacto) e com
+ * padrão diferente por significado. `uOwnAny` = 0 pula a leitura da textura
+ * (visitante/exploração: custo zero por fragmento).
+ * Um único material e zero draw calls extras — ver OwnershipOverlay.
+ */
+export const ownershipUniforms = {
+  uOwnFlags: { value: placeholderFlags() as THREE.Texture },
+  uOwnWidth: { value: 1 },
+  uOwnColor: { value: new THREE.Color(MONO_LIGHT) },
+  uOwnAny: { value: 0 },
+};
+
+function placeholderFlags() {
+  const t = new THREE.DataTexture(new Uint8Array(1), 1, 1, THREE.RedFormat, THREE.UnsignedByteType);
+  t.needsUpdate = true;
+  return t;
+}
+
+/** aplicado depois do remendo monocromático (emissivemap) e antes da luz */
+const OWN = /* glsl */ `
+if (uOwnAny > 0.5 && vBidx > 0.5) {
+  int bi = int(vBidx + 0.5) - 1;
+  int ow = int(uOwnWidth + 0.5);
+  float flag = texelFetch(uOwnFlags, ivec2(bi % ow, bi / ow), 0).r;
+  if (flag > 0.05) {
+    float mine = step(0.75, flag);
+    // meu: borda acesa (fresnel) + brilho leve constante, igual de dia e de noite
+    float rim = pow(1.0 - clamp(abs(dot(normal, normalize(vViewPosition))), 0.0, 1.0), 2.5);
+    // à venda: faixas diagonais finas (padrão, não só intensidade)
+    float stripe = step(0.8, fract((vWPos.x + vWPos.y - vWPos.z) * 0.3));
+    totalEmissiveRadiance += uOwnColor * (mine * (0.08 + 0.6 * rim) + (1.0 - mine) * stripe * 0.3);
+  }
+}
+`;
 
 /** camadas do atlas que recebem a cor do vértice (paredes pintadas etc.) */
 export const TINTABLE_LAYERS = [0, 3, 4, 7, 11, 12, 13];
@@ -317,6 +356,7 @@ export function createBuildingMaterial(atlas: LayerAtlas | null): THREE.MeshStan
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uNight = worldUniforms.uNight;
     shader.uniforms.uLitRatio = worldUniforms.uLitRatio;
+    Object.assign(shader.uniforms, ownershipUniforms);
     if (atlas) {
       const pad = <T>(arr: T[], fill: T) => Array.from({ length: 16 }, (_, i) => arr[i] ?? fill);
       shader.uniforms.uAtlas = { value: atlas.albedo };
@@ -328,17 +368,18 @@ export function createBuildingMaterial(atlas: LayerAtlas | null): THREE.MeshStan
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute vec4 facade;\nattribute vec4 style;\nattribute vec4 aux;\nvarying vec4 vFacade;\nvarying vec4 vStyle;\nvarying vec4 vAux;\nvarying vec2 vUvM;\nvarying vec3 vWPos;',
+        '#include <common>\nattribute vec4 facade;\nattribute vec4 style;\nattribute vec4 aux;\nattribute float bidx;\nvarying vec4 vFacade;\nvarying vec4 vStyle;\nvarying vec4 vAux;\nvarying vec2 vUvM;\nvarying vec3 vWPos;\nvarying float vBidx;',
       )
       .replace(
         '#include <begin_vertex>',
-        '#include <begin_vertex>\nvFacade = facade;\nvStyle = style;\nvAux = aux;\nvUvM = uv;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+        '#include <begin_vertex>\nvFacade = facade;\nvStyle = style;\nvAux = aux;\nvUvM = uv;\nvBidx = bidx;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${PARS}`)
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${MAIN}`);
+      .replace('#include <common>', `#include <common>\n${PARS}\nvarying float vBidx;\nuniform highp sampler2D uOwnFlags;\nuniform float uOwnWidth;\nuniform vec3 uOwnColor;\nuniform float uOwnAny;`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${MAIN}`)
+      .replace('#include <lights_physical_fragment>', `${OWN}\n#include <lights_physical_fragment>`);
   };
-  m.customProgramCacheKey = () => `building-v4-${!!atlas}-${LOWPOLY}`;
+  m.customProgramCacheKey = () => `building-v6-${!!atlas}-${LOWPOLY}`;
   return m;
 }
 

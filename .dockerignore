@@ -1,0 +1,15 @@
+# o código entra por bind mount; a imagem só precisa dos manifestos npm
+**/node_modules
+dist
+.cache
+.git
+.claude
+**/*.log
+.env
+.env.*
+**/.env
+*.pem
+*.key
+public
+docs
+backups

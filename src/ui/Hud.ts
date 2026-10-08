@@ -1,5 +1,5 @@
 import type { CameraMode, Game } from '../core/Game';
-import { ICONS, h, svgIcon } from './dom';
+import { ICONS, h, iconEl, svgIcon } from './dom';
 import { Joystick } from './Joystick';
 
 /** Barra superior + controles de modo + dica + joystick. */
@@ -12,6 +12,10 @@ export class Hud {
   private runBtn: HTMLButtonElement;
   private toastEl: HTMLElement;
   private toastTimer = 0;
+  /** erro: dura mais, quebra linha, tem ícone e botão fechar (role=alert) */
+  private errEl: HTMLElement;
+  private errText = h('span', { class: 'msg' });
+  private errTimer = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -33,7 +37,16 @@ export class Hud {
     this.controls = h('div', { class: 'controls' });
     this.hint = h('div', { class: 'hint card' });
     this.toastEl = h('div', { class: 'toast card', role: 'status', 'aria-live': 'polite' });
-    root.append(this.topbar, this.controls, this.hint, this.toastEl);
+    this.errEl = h(
+      'div',
+      { class: 'toast err card', role: 'alert' },
+      iconEl(ICONS.alert),
+      this.errText,
+      h('button', { type: 'button', class: 'close', 'aria-label': 'Fechar aviso', html: svgIcon(ICONS.close), onclick: () => this.hideError() }),
+    );
+    root.append(this.topbar, this.controls, this.hint);
+    // no body (fora do contexto de empilhamento do #ui): aparece sobre diálogos
+    document.body.append(this.toastEl, this.errEl);
 
     this.joystick = new Joystick(root, game.input);
     this.runBtn = h('button', {
@@ -79,10 +92,23 @@ export class Hud {
     this.hintTimer = window.setTimeout(() => (this.hint.style.opacity = '0'), 6000);
   }
 
-  toast(msg: string) {
+  /** aviso curto; `error` = variante persistente (7 s, ícone, fechar) */
+  toast(msg: string, kind: 'info' | 'error' = 'info') {
+    if (kind === 'error') {
+      this.errText.textContent = msg;
+      this.errEl.classList.add('show');
+      clearTimeout(this.errTimer);
+      this.errTimer = window.setTimeout(() => this.hideError(), 7000);
+      return;
+    }
     this.toastEl.textContent = msg;
     this.toastEl.classList.add('show');
     clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 2200);
+    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 3000);
+  }
+
+  private hideError() {
+    clearTimeout(this.errTimer);
+    this.errEl.classList.remove('show');
   }
 }

@@ -28,6 +28,83 @@ Outros scripts:
 | `npm run preview` | serve o build de produção |
 | `npm run typecheck` | só o TypeScript |
 
+## Rodando com Docker
+
+Sobe o jogo online completo (Caddy + Vite + server + Postgres) com hot reload.
+Requisitos: Docker Desktop (Compose v2) e Node 20+ só para gerar os segredos.
+
+```bash
+node scripts/gen-secrets.mjs      # cria (ou completa) o .env com senhas/chaves aleatórias
+docker compose up -d --build      # ou: npm run docker:up
+npm run docker:smoke              # verificação ponta a ponta do stack
+```
+
+Abra **https://localhost:8443** (única porta exposta; Postgres e server não
+publicam portas). Editar `src/` aplica via HMR; editar `server/src` ou
+`server/migrations` reinicia o server (`docker compose logs -f server web`).
+Migrações novas: `docker compose up -d migrate` (o serviço one-shot reaplica).
+
+| serviço | papel | redes |
+| --- | --- | --- |
+| `caddy` | TLS em 127.0.0.1:8443, CSP, compressão | edge |
+| `web` | Vite dev + HMR; só `src/`, `public/` e configs montados (só-leitura), nenhum segredo | edge |
+| `server` | API Fastify (papel `minitown_app`); só o Caddy a alcança | proxy + data |
+| `server-deps` | one-shot sem segredos: `npm ci --ignore-scripts` do back quando o lockfile muda | egress |
+| `migrate` | one-shot: migrações + catálogo (papel `minitown_owner`) | data |
+| `db` | PostgreSQL 17, TLS 1.3 obrigatório | data (interna) |
+| `backup` | `pg_dump` diário (papel `minitown_backup`, só leitura) | data |
+| `certs` | one-shot: certificado TLS do Postgres | nenhuma |
+
+- **TLS**: o Caddy usa uma CA local (`tls internal`). Para o navegador confiar,
+  exporte e importe em "Autoridades de certificação raiz confiáveis":
+  `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt caddy-root.crt`.
+  Com `curl`, use `-k` ou `--cacert caddy-root.crt`.
+- **HSTS**: em dev o Caddy manda `max-age=0` (HSTS vale para o host
+  `localhost` inteiro, em qualquer porta; um valor longo quebraria o `npm run
+  dev` em http://localhost:5173). Se o navegador ficou com um HSTS antigo,
+  abrir https://localhost:8443 uma vez já o apaga (ou limpe em
+  `chrome://net-internals/#hsts`). Produção: `CADDY_HSTS` no `.env`.
+- **Postgres**: TLS obrigatório (certificado gerado pelo serviço `certs`; o
+  server valida CA + hostname), `scram-sha-256`. O superusuário `postgres` só
+  entra pelo socket local (`docker compose exec db psql -U postgres`); pela
+  rede só `minitown_app`/`minitown_owner`/`minitown_backup`, só na rede `data`.
+  Papéis criados na criação do volume (`server/db-init` +
+  `docker/db/initdb/20-backup-role.sh`).
+- **Segredos** ficam só no `.env` (ignorado pelo git; modelo em `.env.example`),
+  lido pelo compose no host — nenhum container monta o `.env`, e cada serviço
+  recebe só as variáveis de que precisa. Rodar `gen-secrets` de novo só
+  acrescenta variáveis que faltam. Recriar com `--force` exige apagar o volume
+  do banco (`docker compose down -v`), que guarda as senhas antigas.
+- **Imagens** fixadas por digest (`docker/db/Dockerfile`, `docker/*.Dockerfile`,
+  `caddy` no compose); atualizar = trocar o digest de propósito.
+- `node_modules` vive em volumes nomeados (binários Linux); mudou o
+  `package-lock.json`, o container reinstala sozinho ao reiniciar.
+- `npm run dev` local continua funcionando sem Docker (só o front, modo offline).
+
+### Backup e restauração
+
+O serviço `backup` faz `pg_dump -Fc` (TLS verify-full, papel só-leitura) a cada
+24 h em `./backups/` no host — fora dos volumes, então sobrevive a `docker
+compose down -v`. Retenção: 7 diários (`backups/daily`) e 4 semanais
+(`backups/weekly`), cada arquivo com `.sha256`. O dump é validado com
+`pg_restore --list` antes de entrar na rotação.
+
+```bash
+npm run docker:backup                                   # backup agora
+bash docker/backup/restore.sh backups/daily/minitown-<UTC>.dump
+```
+
+O `restore.sh` confere o sha256, para a API, guarda um dump do banco atual em
+`backups/pre-restore/`, recria o banco com `pg_restore --create` (superusuário,
+socket local) e sobe `migrate` + `server`. Volume antigo, criado antes do papel
+de backup existir: `docker compose exec db bash
+/docker-entrypoint-initdb.d/20-backup-role.sh`.
+
+Produção (fora deste compose): arquivamento contínuo de WAL com pgBackRest ou
+wal-g para PITR, backups **cifrados** (o dump contém `email_enc`, hashes de
+senha e de sessão) e cópia fora do host; depois de migrar, `ALTER ROLE
+minitown_owner NOLOGIN` (ou senha fora do host da API).
+
 ## Controles
 
 | | desktop | celular |
