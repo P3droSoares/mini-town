@@ -137,15 +137,30 @@ async function boot() {
       const a = document.activeElement as HTMLInputElement | null;
       if (e.detail > 0 && a && (a.tagName === 'BUTTON' || a.type === 'checkbox')) a.blur();
     });
+    // montado, Espaço é freio: não aciona botão/caixa com foco do teclado
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        const a = document.activeElement as HTMLInputElement | null;
+        if (e.code === 'Space' && game.player.state.vehicle && game.mode === 'walk' && a && (a.tagName === 'BUTTON' || a.type === 'checkbox')) a.blur();
+      },
+      true,
+    );
     game.input.on('KeyF', () => delivery.toggleRide());
     game.input.on('KeyE', () => app.toggle());
-    game.input.on('Enter', () => delivery.accept());
-    game.input.on('NumpadEnter', () => delivery.accept());
+    // Enter num botão com foco é do botão (ex.: "Recusar"), não aceita a corrida
+    const acceptKey = () => {
+      const a = document.activeElement;
+      if (!(a instanceof HTMLButtonElement) && !(a instanceof HTMLAnchorElement)) delivery.accept();
+    };
+    game.input.on('Enter', acceptKey);
+    game.input.on('NumpadEnter', acceptKey);
     search.onChoose = (g) => {
-      if (!game.goTo(g.center[0], g.center[1], 260)) noTeleport();
+      const moved = game.goTo(g.center[0], g.center[1], 260);
+      // na corrida a rua só é destacada
       highlight.show(g.streets);
       minimap.flash(g.streets.map((s) => s.points));
-      hud.toast(g.name);
+      hud.toast(moved ? g.name : `${g.name} destacada (sem teletransporte durante a corrida)`);
     };
 
     game.start();

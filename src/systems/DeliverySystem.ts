@@ -318,6 +318,7 @@ export class DeliverySystem implements System {
   }
 
   private pickCustomer(r: Restaurant): Place | null {
+    if (!this.customers.length) return null;
     for (let i = 0; i < 60; i++) {
       const b = this.customers[Math.floor(this.rng() * this.customers.length)];
       const d = Math.hypot(b.centroid[0] - r.spot[0], b.centroid[1] - r.spot[1]);

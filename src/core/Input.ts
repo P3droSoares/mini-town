@@ -17,7 +17,10 @@ export class Input {
 
   private isTyping(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
-    return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    if (!t) return false;
+    // caixa de seleção/botão com foco não é digitação: atalhos continuam valendo
+    if (t.tagName === 'INPUT') return !['checkbox', 'radio', 'button', 'submit', 'reset'].includes((t as HTMLInputElement).type);
+    return t.tagName === 'TEXTAREA' || t.isContentEditable;
   }
 
   private onDown = (e: KeyboardEvent) => {

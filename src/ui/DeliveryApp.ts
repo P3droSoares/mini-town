@@ -51,6 +51,8 @@ export class DeliveryApp {
       ),
       this.body,
     );
+    // fechado: fora da ordem de Tab (senão dá para comprar "às cegas")
+    this.el.inert = true;
     parent.append(this.el);
     profile.onChange(() => this.render());
     // aceitou corrida: guarda o "celular" e pilota
@@ -88,12 +90,14 @@ export class DeliveryApp {
 
   open() {
     this.render();
+    this.el.inert = false;
     this.el.classList.add('open');
     this.button.classList.add('active');
     this.onOpen?.();
   }
 
   close() {
+    this.el.inert = true;
     this.el.classList.remove('open');
     this.button.classList.remove('active');
   }
